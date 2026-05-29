@@ -1,6 +1,6 @@
 # Bengali Multi-Label Cyberbullying Detection — v5 (T4x2 Parallel)
 
-## Lightweight Pretrained-Embedding Model (~8.5M total / ~0.75M trainable, UNDER 10M)
+## Lightweight Pretrained-Embedding Model (~8.2M total / ~0.75M trainable Phase 1, UNDER 10M)
 
 **5-label multi-label classification:** `vulgar`, `threat`, `troll`, `insult`, `neutral`
 
@@ -13,21 +13,24 @@ v5 leverages:
 1. **New 15K balanced dataset** (+43% more training data)
 2. **T4x2 parallel GPU training** (DataParallel → larger effective batch, faster epochs)
 3. **Focal Loss** for the severely imbalanced `threat` class (6.36:1 neg/pos)
-4. **Embedding fine-tuning** in the final phase (unfreeze last 30% of training)
-5. **Cosine Annealing with Warm Restarts** for better convergence
-6. **Increased vocab** (25K→30K) to capture the richer vocabulary
+4. **Threat-class augmentation** (word swap, deletion, char noise → 2x expansion)
+5. **Embedding fine-tuning** in the final phase (unfreeze last 30% of training)
+6. **Multi-seed ensemble** (3 seeds: 42, 7, 2024) + cross-version (v4+v5) averaging
+7. **Cosine Annealing with Warm Restarts + SWA** for better convergence
 
 | Version | Macro-F1 | Train-val gap | Dataset | Key Change |
 |---------|----------|---------------|---------|------------|
 | v3 | 0.6866 | +0.166 | 10.6K | No semantic priors |
 | v4 | 0.7323 | +0.058 | 10.6K | Frozen FastText |
-| **v5** | **target ≥0.78** | target <0.06 | **15.2K** | +data, focal loss, unfreeze, T4x2 |
+| **v5** | **target ≥0.78** | target <0.06 | **15.2K + augmented** | +data, focal, unfreeze, augment, ensemble, T4x2 |
 
-### Parameter Budget (STRICT: under 10M)
+---
+
+## Parameter Budget (STRICT: under 10M)
 
 | Component | Params | Trainable? |
 |-----------|--------|------------|
-| FastText embedding 25K × 300 | 7.5M | Phase 1: No / Phase 2: Yes (last 5 epochs) |
+| FastText embedding 25K × 300 | 7.5M | Phase 1: No / Phase 2: Yes (last 10 epochs) |
 | Projection 300 → 128 | 38K | Yes |
 | Character CNN | 18K | Yes |
 | Word CNN (3 kernels × 96 filters) | 194K | Yes |
@@ -35,370 +38,305 @@ v5 leverages:
 | Attention + classifier | 56K | Yes |
 | **Total** | **~8.2M** | **Phase 1: ~0.69M / Phase 2: ~8.2M** |
 
----
-
-## Complete Notebook Sections
-
-### Section 1 — Setup & Imports
-- Install `iterative-stratification`
-- Import PyTorch, numpy, pandas, sklearn, matplotlib
-- Set seeds for reproducibility
-- Detect GPUs (expect 2x T4)
-
-### Section 2 — Configuration
-```python
-class Config:
-    # ----- data -----
-    DATA_PATH = '/kaggle/input/your-dataset/combined_multi_labeled_bengali_comments_balanced_13k_14k_plus_neutral.csv'
-    TEXT_COL = 'text'
-    LABEL_COLS = ['vulgar', 'threat', 'troll', 'insult', 'neutral']
-    NUM_CLASSES = 5
-    TOXIC_COLS = ['vulgar', 'threat', 'troll', 'insult']
-
-    # ----- preprocessing -----
-    MIN_WORDS = 2
-
-    # ----- vocab -----
-    VOCAB_SIZE = 25_000          # Still 25K to stay under 10M total
-    MIN_FREQ = 2                 # Bump from 1→2 (more data = can afford higher min)
-    MAX_LEN = 80
-
-    CHAR_VOCAB_SIZE = 250
-    MAX_CHAR_PER_WORD = 16
-    CHAR_EMBED_DIM = 24
-    CHAR_CNN_FILTERS = 32
-    CHAR_KERNELS = (2, 3, 4)
-
-    # ----- pretrained embeddings -----
-    USE_PRETRAINED = True
-    FASTTEXT_DIM = 300
-    FASTTEXT_URL = 'https://dl.fbaipublicfiles.com/fasttext/vectors-crawl/cc.bn.300.vec.gz'
-    FREEZE_EMBEDDING = True      # Phase 1: frozen
-    UNFREEZE_AT_EPOCH = 25       # Phase 2: unfreeze at epoch 25 of 35
-    UNFREEZE_LR_FACTOR = 0.1    # 10x smaller LR for embeddings when unfrozen
-    PROJECTION_DIM = 128
-
-    # ----- split (stratified 70/10/20) -----
-    TRAIN_FRAC = 0.70
-    VAL_FRAC = 0.10
-    TEST_FRAC = 0.20
-
-    # ----- model -----
-    CNN_FILTERS = 96
-    CNN_KERNELS = (2, 3, 4)
-    GRU_HIDDEN = 96
-    GRU_LAYERS = 2
-    DROPOUT_EMB = 0.35           # Slightly less dropout (more data = less overfitting)
-    DROPOUT = 0.5                # Reduced from 0.6
-    NUM_DROPOUT_SAMPLES = 5
-
-    # ----- training (T4x2 parallel) -----
-    BATCH_SIZE_PER_GPU = 64      # 64 per GPU × 2 GPUs = 128 effective
-    NUM_GPUS = 2
-    EFFECTIVE_BATCH_SIZE = 128
-    EPOCHS = 35                  # More epochs (more data needs more time)
-    LR = 1.5e-3                  # Slightly higher (larger batch)
-    WEIGHT_DECAY = 1e-4
-    WARMUP_RATIO = 0.08
-    GRAD_CLIP = 1.0
-    LABEL_SMOOTHING = 0.05
-
-    # ----- focal loss (NEW in v5) -----
-    USE_FOCAL_LOSS = True
-    FOCAL_GAMMA = 2.0            # Focus on hard examples
-    FOCAL_ALPHA_THREAT = 0.85    # Extra weight for underrepresented threat class
-
-    # ----- augmentation -----
-    WORD_DROPOUT_P = 0.18
-    MIXUP_ALPHA = 0.4
-    MIXUP_PROB = 0.5
-
-    # ----- SWA -----
-    USE_SWA = True
-    SWA_START_FRAC = 0.65
-    SWA_LR = 2e-4
-
-    # ----- early stopping -----
-    EARLY_STOP_ON = 'val_loss'
-    PATIENCE = 8                 # More patience (more epochs)
-
-    # ----- evaluation -----
-    DEFAULT_THRESHOLD = 0.5
-    THRESHOLD_GRID = np.arange(0.10, 0.85, 0.01)
-```
-
-### Section 3 — Multi-GPU Setup
-```python
-import torch.nn as nn
-
-# Detect available GPUs
-NUM_GPUS = torch.cuda.device_count()
-print(f'Available GPUs: {NUM_GPUS}')
-for i in range(NUM_GPUS):
-    print(f'  GPU {i}: {torch.cuda.get_device_name(i)}')
-
-DEVICE = torch.device('cuda:0')  # Primary device
-
-# DataParallel wrapper (applied after model creation)
-def parallelize_model(model):
-    if NUM_GPUS > 1:
-        print(f'Using DataParallel across {NUM_GPUS} GPUs')
-        model = nn.DataParallel(model)
-    return model.to(DEVICE)
-```
-
-### Section 4 — Load & Clean Dataset (15K)
-- Load the new CSV: `combined_multi_labeled_bengali_comments_balanced_13k_14k_plus_neutral.csv`
-- Fix 6 neutral+toxic contradictions
-- Merge duplicates (64 redundant rows)
-- Drop 98 single-word samples
-- Expected final size: ~15,000+ rows
-
-### Section 5 — EDA
-- Per-class positive counts bar chart
-- Labels-per-comment distribution
-- Word count histogram with MAX_LEN line
-- **NEW:** Class imbalance visualization (neg/pos ratio per class)
-- **NEW:** Co-occurrence heatmap
-
-### Section 6 — Text Preprocessing
-- Same as v4 (URL, mention, hashtag, emoji removal; Bengali/English character filtering)
-
-### Section 7 — Stratified Split (70/10/20)
-- ~10,600 train / ~1,500 val / ~3,000 test
-- Verify per-class positive rates are balanced across splits
-
-### Section 8 — Vocabularies
-- Word vocab: min_freq=2, cap=25K (to keep total params < 10M)
-- Char vocab: 250
-- Report OOV rates
-
-### Section 9 — Load Pretrained FastText
-- Same streaming approach as v4
-- Report coverage (expected >88% with richer vocab)
-
-### Section 10 — Dataset & DataLoaders (T4x2 optimized)
-```python
-# Key change: batch_size = per_gpu_batch × num_gpus
-effective_bs = cfg.BATCH_SIZE_PER_GPU * cfg.NUM_GPUS  # 128
-
-train_loader = DataLoader(train_ds, batch_size=effective_bs,
-                          shuffle=True, num_workers=4, pin_memory=True,
-                          drop_last=True)  # drop_last for DataParallel consistency
-val_loader = DataLoader(val_ds, batch_size=effective_bs,
-                        shuffle=False, num_workers=4, pin_memory=True)
-test_loader = DataLoader(test_ds, batch_size=effective_bs,
-                         shuffle=False, num_workers=4, pin_memory=True)
-```
-
-### Section 11 — Model Architecture (Same as v4, under 10M)
-- Identical V4Model architecture
-- Verify total params < 10M
-- Apply `nn.DataParallel` for T4x2
-
-### Section 12 — Focal Loss (NEW in v5)
-```python
-class FocalBCELoss(nn.Module):
-    """Per-class focal loss with asymmetric alpha for imbalanced classes."""
-    def __init__(self, gamma=2.0, alpha=None, pos_weight=None, smoothing=0.0):
-        super().__init__()
-        self.gamma = gamma
-        self.alpha = alpha  # per-class alpha tensor
-        self.pos_weight = pos_weight
-        self.smoothing = smoothing
-
-    def forward(self, logits, targets):
-        if self.smoothing > 0:
-            targets = targets * (1 - self.smoothing) + 0.5 * self.smoothing
-
-        bce = F.binary_cross_entropy_with_logits(
-            logits, targets, reduction='none', pos_weight=self.pos_weight)
-
-        probs = torch.sigmoid(logits)
-        pt = targets * probs + (1 - targets) * (1 - probs)
-        focal_weight = (1 - pt) ** self.gamma
-
-        loss = focal_weight * bce
-
-        if self.alpha is not None:
-            loss = loss * self.alpha.unsqueeze(0)
-
-        return loss.mean()
-```
-
-### Section 13 — Training Setup (Two-Phase LR)
-```python
-# Phase 1: Frozen embeddings, normal LR (epochs 1-24)
-# Phase 2: Unfrozen embeddings, embedding LR = 0.1× main LR (epochs 25-35)
-
-# Optimizer with parameter groups (for phase 2)
-def create_optimizer(model, cfg, phase=1):
-    if phase == 1:
-        params = [p for p in model.parameters() if p.requires_grad]
-        return AdamW(params, lr=cfg.LR, weight_decay=cfg.WEIGHT_DECAY)
-    else:
-        # Phase 2: differential learning rates
-        emb_params = []
-        other_params = []
-        for name, param in model.named_parameters():
-            if 'word_embedding' in name:
-                param.requires_grad = True
-                emb_params.append(param)
-            elif param.requires_grad:
-                other_params.append(param)
-        return AdamW([
-            {'params': other_params, 'lr': cfg.LR * 0.5},
-            {'params': emb_params, 'lr': cfg.LR * cfg.UNFREEZE_LR_FACTOR},
-        ], weight_decay=cfg.WEIGHT_DECAY)
-
-# Scheduler: CosineAnnealingWarmRestarts
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
-scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-5)
-```
-
-### Section 14 — Training Loop (with parallel GPUs + two phases)
-```python
-# Key features:
-# 1. DataParallel across 2x T4
-# 2. Phase 1 (epochs 1-24): frozen embeddings, focal loss
-# 3. Phase 2 (epochs 25-35): unfrozen embeddings, reduced LR
-# 4. Mixup augmentation
-# 5. Multi-sample dropout (5 forward passes during training)
-# 6. SWA in final epochs
-# 7. Track train/val loss AND accuracy curves per epoch
-
-history = {
-    'train_loss': [], 'val_loss': [],
-    'train_macro_f1': [], 'val_macro_f1': [],
-    'train_accuracy': [], 'val_accuracy': [],  # NEW: subset accuracy
-    'val_per_class_f1': [],
-    'lr': [],
-    'phase': [],  # track which phase each epoch was in
-}
-```
-
-### Section 15 — Training & Validation Curves (KEY DELIVERABLE)
-```python
-fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-
-# Plot 1: Loss curves
-axes[0,0].plot(epochs, history['train_loss'], 'b-', label='Train Loss')
-axes[0,0].plot(epochs, history['val_loss'], 'r-', label='Val Loss')
-axes[0,0].axvline(cfg.UNFREEZE_AT_EPOCH, color='green', ls='--', label='Unfreeze')
-axes[0,0].set_title('Training & Validation Loss')
-axes[0,0].legend(); axes[0,0].grid(alpha=0.3)
-
-# Plot 2: Macro-F1 curves (accuracy proxy for multi-label)
-axes[0,1].plot(epochs, history['train_macro_f1'], 'b-', label='Train Macro-F1')
-axes[0,1].plot(epochs, history['val_macro_f1'], 'r-', label='Val Macro-F1')
-axes[0,1].axvline(cfg.UNFREEZE_AT_EPOCH, color='green', ls='--', label='Unfreeze')
-axes[0,1].set_title('Training & Validation Macro-F1')
-axes[0,1].legend(); axes[0,1].grid(alpha=0.3)
-
-# Plot 3: Per-class val F1 over epochs
-for i, c in enumerate(cfg.LABEL_COLS):
-    axes[1,0].plot(epochs, per_cls[:, i], 'o-', label=c)
-axes[1,0].set_title('Per-Class Val F1')
-axes[1,0].legend(); axes[1,0].grid(alpha=0.3)
-
-# Plot 4: Learning rate schedule
-axes[1,1].plot(epochs, history['lr'], 'g-')
-axes[1,1].axvline(cfg.UNFREEZE_AT_EPOCH, color='red', ls='--', label='Phase 2')
-axes[1,1].set_title('Learning Rate Schedule')
-axes[1,1].legend(); axes[1,1].grid(alpha=0.3)
-
-plt.tight_layout(); plt.savefig('v5_training_curves.png', dpi=150)
-plt.show()
-```
-
-### Section 16 — Threshold Tuning on Validation Set
-- Same grid search as v4
-
-### Section 17 — Final Test-Set Evaluation
-- Macro/Micro/Weighted/Samples F1
-- Hamming Loss
-- ROC-AUC, PR-AUC
-- Per-class classification report
-- Confusion matrices
-
-### Section 18 — Evaluation Visualizations
-- Per-class F1 bar chart
-- ROC curves per class
-- PR curves per class
-- Confusion matrix heatmaps
-
-### Section 19 — Overfitting Diagnostic
-```python
-print('OVERFITTING DIAGNOSTIC')
-print(f'Final train F1: {final_tr:.4f}')
-print(f'Final val   F1: {final_va:.4f}')
-print(f'Gap: {gap:+.4f}')
-print(f'v4 gap: +0.058 → v5 gap: {gap:+.3f}')
-```
-
-### Section 20 — Error Analysis
-- Top misclassified examples per class
-- Attention visualization on failures
-
-### Section 21 — Save Model & Summary
-- Save checkpoint, thresholds, config, history
-- Export summary JSON
-
-### Section 22 — Version Comparison Table
-```
-| Version | Data  | Params  | Macro-F1 | Gap    | Key Feature            |
-|---------|-------|---------|----------|--------|------------------------|
-| v3      | 10.6K | ~1.5M  | 0.6866   | +0.166 | Random embeddings      |
-| v4      | 10.6K | ~8.2M  | 0.7323   | +0.058 | Frozen FastText        |
-| v5      | 15.2K | ~8.2M  | ≥0.78?   | <0.06  | +Data, Focal, Unfreeze |
-```
+✅ **UNDER 10M TOTAL PARAMETERS** at all times.
 
 ---
 
-## T4x2 Parallel Training — Technical Details
+## Training & Validation Curves (KEY DELIVERABLE)
 
-### How DataParallel Works on 2x T4:
-1. Model is replicated on both GPUs
-2. Each mini-batch is split: 64 samples → GPU0, 64 samples → GPU1
+The notebook produces a **2×2 subplot figure (14×10 inches)** showing:
+
+1. **[0,0] Training & Validation Loss** — with unfreeze epoch vertical line
+2. **[0,1] Training & Validation Macro-F1** — with best epoch marker + unfreeze line
+3. **[1,0] Per-Class Validation F1** — 5 colored lines for vulgar/threat/troll/insult/neutral
+4. **[1,1] Learning Rate Schedule** — log-scale, showing warmup → cosine → SWA phases
+
+Plus overfitting diagnostic comparing train-val gap to v4 baseline.
+
+---
+
+## T4x2 Parallel GPU Training
+
+### How DataParallel Works on 2× T4:
+1. Model is replicated on both GPUs automatically
+2. Each mini-batch (128) is split: 64 samples → GPU0, 64 samples → GPU1
 3. Forward pass runs simultaneously on both GPUs
 4. Gradients are gathered on GPU0, averaged, and model updated
 5. ~1.7-1.8× speedup (not perfect 2× due to communication overhead)
 
-### Practical Code:
+### Practical Implementation:
 ```python
 # After model creation
-model = V5Model(cfg, word_vocab_size, char_vocab_size, pretrained_emb)
-model = nn.DataParallel(model)  # Wrap for multi-GPU
-model = model.to(DEVICE)
+model = V5Model(cfg, embed_matrix, VOCAB_SIZE, CHAR_VOCAB_SIZE)
+if NUM_GPUS > 1:
+    model = nn.DataParallel(model)
+model = model.to(device)
 
-# Access underlying model (for state_dict, etc.)
-base_model = model.module if hasattr(model, 'module') else model
+# Effective batch = 64 per GPU × 2 GPUs = 128
+EFFECTIVE_BATCH = cfg.BATCH_SIZE_PER_GPU * NUM_GPUS  # 128
 
-# For unfreezing embeddings in phase 2:
-base_model.word_embedding.weight.requires_grad = True
-# Must re-create optimizer with new param groups
+# DataLoader with drop_last=True for consistent batch sizes
+train_loader = DataLoader(train_ds, batch_size=EFFECTIVE_BATCH,
+                          shuffle=True, num_workers=4, pin_memory=True,
+                          drop_last=True)
 ```
 
-### Timing Expectations (T4x2 vs T4x1):
-- v4 on T4x1: ~4.4s per epoch (7,404 train samples)
-- v5 on T4x2: ~4-5s per epoch (10,600 train samples) — larger data but 2 GPUs
+### Timing Expectations:
+- v4 on T4×1: ~4.4s per epoch (7,404 train samples)
+- v5 on T4×2: ~4-5s per epoch (~11,000 train samples with augmentation)
 - Total training: 35 epochs × 5s ≈ ~3 minutes
 
 ---
 
-## Key Differences from v4 → v5
+## Threat-Class Augmentation Strategy
+
+### Problem:
+- `threat` class has only 2,062 samples (13.58%), creating 6.36:1 neg/pos ratio
+- In v4, threat was one of the weaker performers
+
+### Solution: Augment threat samples by 2× using:
+1. **Random word swap** — swap positions of 2 random words in the sentence
+2. **Random word deletion** — remove individual words with probability 0.1
+3. **Synonym-style perturbation** — duplicate a random Bengali word with slight character-level noise (adjacent char swap)
+
+### Implementation:
+```python
+def augment_threat_samples(df, cfg):
+    threat_df = df[df['threat'] == 1].copy()
+    n_augment = int(len(threat_df) * (cfg.THREAT_AUG_FACTOR - 1))  # ~2062 new samples
+
+    aug_rows = []
+    for _ in range(n_augment):
+        row = threat_df.sample(1).iloc[0].copy()
+        row[cfg.TEXT_COL] = augment_text(str(row[cfg.TEXT_COL]))
+        aug_rows.append(row)
+
+    return pd.concat([df, pd.DataFrame(aug_rows)], ignore_index=True)
+```
+
+### Expected Impact:
+- Threat samples: 2,062 → ~4,124 (now 24% of dataset instead of 13.6%)
+- Threat neg/pos ratio: 6.36:1 → ~3.2:1 (much more manageable)
+- Combined with focal loss, threat F1 should improve from 0.77 → 0.80+
+
+---
+
+## Ensemble Strategy
+
+### 1. Multi-Seed Ensemble (Primary)
+Train 3 models with seeds `[42, 7, 2024]` and average their predicted probabilities:
+```python
+all_probs = [train_with_seed(s) for s in [42, 7, 2024]]
+avg_probs = np.mean(all_probs, axis=0)
+preds = (avg_probs >= thresholds).astype(int)
+```
+**Expected improvement:** +0.5-1.5% macro-F1
+
+### 2. Cross-Version Ensemble (v4 + v5)
+Average probability outputs from the best v4 model and v5 model:
+```python
+cross_probs = 0.5 * v4_test_probs + 0.5 * v5_test_probs
+preds = (cross_probs >= thresholds).astype(int)
+```
+**Expected improvement:** +0.5-1.0% macro-F1 (captures complementary patterns)
+
+### Why It Works:
+- Different seeds → different local minima → different error patterns
+- v4 (frozen) and v5 (unfrozen) learn different feature spaces
+- Averaging smooths prediction noise → lower variance → better generalization
+
+---
+
+## Complete Notebook Sections (20 Sections)
+
+### Section 1 — Title & Introduction (Markdown)
+- Bengali Multi-Label Cyberbullying Detection v5
+- Architecture overview, hardware, dataset, key features
+
+### Section 2 — Setup & Imports (Code)
+- `!pip install iterative-stratification -q`
+- All imports: torch, numpy, pandas, sklearn, matplotlib, seaborn
+- `set_seed()` function for reproducibility
+- Device detection: print GPU count and names
+
+### Section 3 — Configuration (Code)
+```python
+class Config:
+    DATA_PATH = 'combined_multi_labeled_bengali_comments_balanced_13k_14k_plus_neutral.csv'
+    LABEL_COLS = ['vulgar', 'threat', 'troll', 'insult', 'neutral']
+    NUM_CLASSES = 5
+    VOCAB_SIZE = 25000        # Keeps total params at ~8.2M (<10M)
+    MIN_FREQ = 2
+    MAX_LEN = 80
+    FASTTEXT_DIM = 300
+    FREEZE_EMBEDDING = True
+    UNFREEZE_AT_EPOCH = 25
+    UNFREEZE_LR_FACTOR = 0.1  # 10x smaller LR for embeddings when unfrozen
+    PROJECTION_DIM = 128
+    CNN_FILTERS = 96
+    CNN_KERNELS = (2, 3, 4)
+    GRU_HIDDEN = 96
+    GRU_LAYERS = 2
+    DROPOUT_EMB = 0.35
+    DROPOUT = 0.5
+    NUM_DROPOUT_SAMPLES = 5
+    BATCH_SIZE_PER_GPU = 64   # 64 × 2 GPUs = 128 effective
+    EPOCHS = 35
+    LR = 1.5e-3
+    USE_FOCAL_LOSS = True
+    FOCAL_GAMMA = 2.0
+    AUGMENT_THREAT = True
+    THREAT_AUG_FACTOR = 2.0
+    USE_SWA = True
+    PATIENCE = 8
+    ENSEMBLE_SEEDS = [42, 7, 2024]
+```
+
+### Section 4 — Load & Clean Dataset (Code)
+- Load 15K CSV
+- Fix 6 neutral+toxic contradictions
+- Merge 64 duplicate texts
+- Drop 98 single-word samples
+- Print per-class counts
+
+### Section 5 — Threat-Class Augmentation (Markdown + Code)
+- `random_swap()`, `random_deletion()`, `char_noise()`, `synonym_perturbation()`
+- `augment_threat_samples(df, cfg)` — adds ~2,062 augmented threat rows
+- Print before/after class distribution
+
+### Section 6 — EDA (Code)
+- 3-panel figure: per-class counts, labels/comment, word count distribution
+- Verify MAX_LEN coverage
+
+### Section 7 — Text Preprocessing (Code)
+- Bengali regex, URL/mention/emoji/punct removal
+- `clean_text()` and `tokenize()` functions
+- Apply to dataframe, report token stats
+
+### Section 8 — Stratified Split 70/10/20 (Code)
+- `MultilabelStratifiedShuffleSplit` for proper multi-label stratification
+- Print sizes and per-class rates across splits
+- Expected: ~11,200 train / ~1,600 val / ~3,200 test (after augmentation)
+
+### Section 9 — Vocabularies (Code)
+- `build_word_vocab()` — min_freq=2, cap=25K (training only, no leakage)
+- `build_char_vocab()` — 250 characters
+- `encode_words()`, `encode_chars()` functions
+- Report OOV rate on validation set
+
+### Section 10 — Load FastText Embeddings (Code)
+- Find or download `cc.bn.300.vec.gz` (~840MB)
+- Stream-parse: only keep vectors for training vocab words
+- Build embedding matrix, report coverage %
+- Expected: >88% coverage with larger vocab
+
+### Section 11 — Dataset & DataLoaders (Code)
+- `BengaliCBDataset` class with word dropout
+- T4×2 optimized: batch=128, num_workers=4, pin_memory=True, drop_last=True
+- Print batch counts
+
+### Section 12 — Model Architecture (Code)
+- `SpatialDropout1D` — drop entire embedding channels
+- `CharCNN` — 3 kernel sizes (2,3,4) × 32 filters
+- `AdditiveAttention` — Bahdanau-style attention
+- `V5Model` — full architecture with multi-sample dropout classifier
+- **Verify: total params < 10M** (prints PASS/FAIL)
+- Wrap with `nn.DataParallel` for T4×2
+
+### Section 13 — Focal Loss & Training Setup (Code)
+- `FocalBCELoss(gamma=2.0, pos_weight, smoothing=0.05)`
+- Compute per-class pos_weight from training labels
+- AdamW optimizer (only trainable params in Phase 1)
+- LambdaLR scheduler: warmup (8%) → cosine → SWA
+- SWA via `torch.optim.swa_utils.AveragedModel`
+
+### Section 14 — Training Loop (Code) — MAIN LOOP
+- **Phase 1 (epochs 1-24):** Frozen embeddings, normal LR
+- **Phase 2 (epochs 25-35):** Unfreeze embeddings, differential LR (10× smaller for embeddings)
+- Per-epoch: mixup augmentation, multi-sample dropout, gradient clipping
+- SWA model updates when `global_step >= swa_start_step`
+- Early stopping on val F1 (patience=8)
+- Track: train_loss, val_loss, train_f1, val_f1, val_per_class_f1, lr, phase
+- Print per-epoch: `Epoch XX [Phase] | TrLoss | VaLoss | TrF1 | VaF1 | Gap | LR | Time`
+
+### Section 15 — Training & Validation Curves (Code) — KEY DELIVERABLE
+```python
+fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+# [0,0]: Train/Val Loss with unfreeze line
+# [0,1]: Train/Val Macro-F1 with best epoch + unfreeze lines
+# [1,0]: Per-class Val F1 (5 colored lines)
+# [1,1]: Learning Rate (log scale)
+plt.savefig('v5_training_curves.png', dpi=150)
+```
+Plus overfitting diagnostic.
+
+### Section 16 — Threshold Tuning (Code)
+- Grid search: `np.arange(0.2, 0.8, 0.02)` per class
+- Print tuned thresholds and improvement over default 0.5
+
+### Section 17 — Final Test Evaluation (Code)
+- `evaluate_with_thresholds()` on test set
+- Print: Macro-F1, Micro-F1, Weighted-F1, Samples-F1, Hamming Loss, ROC-AUC, PR-AUC
+- Full `classification_report` per class
+
+### Section 18 — Ensemble Strategy (Markdown + Code)
+- `train_with_seed(seed)` function — trains full model, returns test probabilities
+- `ensemble_predictions(all_probs, thresholds)` — averages probs, applies thresholds
+- Instructions for multi-seed and cross-version ensemble
+- Note: single-seed for quick runs, full ensemble for best accuracy
+
+### Section 19 — Save Model & Summary (Code)
+- Save `.pt` checkpoint (state_dict, config, thresholds, history, vocabs)
+- Save `v5_summary.json` with all metrics
+- Print final macro-F1 and param count confirmation
+
+### Section 20 — Conclusion (Markdown)
+- Version comparison table (v3 vs v4 vs v5)
+- Key improvements listed
+- Thesis recommendations
+- Future work suggestions
+
+---
+
+## Key Differences: v4 → v5
 
 | Aspect | v4 | v5 |
 |--------|----|----|
-| Dataset | 10,594 samples | ~15,100 samples |
-| GPUs | 1x T4 | **2x T4 (DataParallel)** |
+| Dataset | 10,594 samples | **~17,000 samples (with augmentation)** |
+| GPUs | 1× T4 | **2× T4 (DataParallel)** |
 | Batch size | 64 | **128 (64 per GPU)** |
 | Loss | Smoothed BCE | **Focal Loss (γ=2)** |
 | Embedding | Frozen forever | **Unfreeze at epoch 25** |
+| Threat handling | pos_weight only | **pos_weight + Focal + Augmentation (2×)** |
 | Vocab min_freq | 1 | **2** |
 | Epochs | 30 | **35** |
-| Dropout | 0.6 | **0.5** (more data) |
+| Dropout | 0.6 | **0.5** (more data = less overfitting) |
 | LR | 1e-3 | **1.5e-3** (larger batch) |
-| Scheduler | Warmup+Cosine+SWA | **CosineWarmRestarts+SWA** |
+| Scheduler | Warmup+Cosine+SWA | **Warmup+Cosine+SWA** |
 | Patience | 6 | **8** |
+| Ensemble | None | **3-seed + cross-version** |
 | Total params | 8.2M (<10M ✓) | **8.2M (<10M ✓)** |
+
+---
+
+## Expected Performance
+
+| Metric | v4 (actual) | v5 Single-Seed (expected) | v5 Ensemble (expected) |
+|--------|-------------|---------------------------|------------------------|
+| Macro-F1 | 0.7323 | 0.76-0.78 | 0.78-0.80 |
+| Train-Val Gap | +0.058 | <0.06 | — |
+| Threat F1 | 0.7719 | 0.80+ | 0.82+ |
+| Troll F1 | 0.6045 | 0.64-0.68 | 0.66-0.70 |
+| Vulgar F1 | 0.8338 | 0.85+ | 0.86+ |
+
+---
+
+## How to Run on Kaggle
+
+1. Create new Kaggle notebook
+2. Upload `bengali-cyberbullying-v5-t4x2.ipynb`
+3. Add the 15K balanced CSV dataset as input
+4. Add FastText Bengali vectors dataset OR enable internet (for download)
+5. **Select accelerator: GPU T4 × 2**
+6. Run All → ~3-5 minutes total training
+7. Outputs: training curves PNG, checkpoint .pt, summary .json
