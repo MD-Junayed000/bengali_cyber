@@ -1,171 +1,127 @@
-# Bengali Multi-Label Cyberbullying Detection — Implementation Plan (v5 Corrected)
+# Bengali Multi-Label Cyberbullying Detection — Implementation Plan
 
-This document describes the **current** implementation in
-`bengali-cyberbullying-lightweight-v4.ipynb`, the problems it fixes relative to the previous
-version, the model architecture (~10M parameters), and how to run it on **Kaggle with 2x T4 GPUs**.
+Two complementary notebooks are provided. Both share the same correct, leakage-free data pipeline,
+predict the **4 toxic labels** (`vulgar`, `threat`, `troll`, `insult`) and **derive** `neutral` as
+`NOT(any toxic)`, tune per-class thresholds, and run on **Kaggle T4 x2**.
 
----
+| Notebook | Backbone | Params | Honest Macro-F1 (expected) | Use when |
+|---|---|---|---|---|
+| `bengali-cyberbullying-lightweight-v4.ipynb` | CharCNN+FastText+TextCNN+BiGRU+Attention (from scratch) | **~9.5M** | ~0.74–0.77 | the ~10M budget is required |
+| `bengali-cyberbullying-transformer.ipynb` | Pretrained BanglaBERT / MuRIL / XLM-R | ~110M | ~0.82–0.88 | accuracy matters more than size |
 
-## 1. Problem & data
-
-- **Task:** multi-label classification of Bengali social-media comments.
-- **Toxic labels predicted by the model (4):** `vulgar`, `threat`, `troll`, `insult`.
-- **`neutral`** is **not** predicted — it is derived deterministically as `NOT(any toxic)`.
-- **Dataset:** `combined_multi_labeled_bengali_comments_balanced_13k_14k_plus_neutral_plus_threat300.csv`
-  (~15.5k rows). After cleaning + dedup on cleaned text: ~15.3k rows.
-
-Class rates (full, post-clean): vulgar ~24.9%, threat ~14.0%, troll ~28.4%, insult ~28.5%,
-neutral ~35.7%.
+> **Honest-baseline context.** After the data-leakage fix, the lightweight model's *true* score was
+> Macro-F1 ≈ **0.72** (the earlier 0.78 was inflated by augmented `threat` near-duplicates leaking
+> into the test set — its test support dropped 646 → 321 once fixed). Neither notebook leaks; the
+> numbers they report are trustworthy.
 
 ---
 
-## 2. What was wrong before and how it is fixed
+## 0. Data & labels
 
-| # | Previous problem | Impact | Fix in this notebook |
-|---|------------------|--------|----------------------|
-| 1 | **Augmentation ran before the split** (whole dataframe), then split. | Augmented near-duplicate threat rows leaked across train/val/test → **inflated `threat` F1 (~0.88)**. | Split **first**; augment **train only**; dedup on **cleaned** text; hard assertion `train∩val = train∩test = 0`. |
-| 2 | **Broken "mixup"** kept one sample's tokens but blended another sample's labels. | Injected label noise into ~50% of batches → **low precision** (troll 0.51, insult 0.66). | Mixup removed entirely. Train F1 now computed on real labels. |
-| 3 | **Stacked imbalance tricks**: `pos_weight≈3x` + Focal + low tuned thresholds. | Heavy over-prediction; macro precision 0.73 vs recall 0.85. | Focal Loss **without** `pos_weight`; class balance comes from train-only augmentation; thresholds tuned in a safe `[0.30, 0.70]` band. |
-| 4 | **`neutral` modeled as an independent sigmoid** despite being deterministic. | Possible `neutral`+toxic contradictions; wasted capacity. | Head outputs 4 toxic logits; neutral derived. Predictions are contradiction-free by construction (asserted). |
-| 5 | **SWA built but never used** at eval; no BatchNorm anyway. | Dead code / wasted compute. | SWA removed. |
-| 6 | Model was ~3.5M params (title claimed 8.2M). | Mismatch with the stated budget. | Rebuilt to **~9.74M** params (verified), still uses **T4x2 DataParallel**. |
-| 7 | Metrics were partly leakage-inflated and partly precision-starved. | Misleading headline number. | Honest evaluation: neutral derived, all 5 classes reported, no leakage. |
+- Dataset: `combined_multi_labeled_bengali_comments_balanced_13k_14k_plus_neutral_plus_threat300.csv`
+  (~15.5k rows → ~15.3k after cleaning + dedup on cleaned text).
+- 4 toxic labels are modeled; `neutral` is derived, so `neutral`+toxic contradictions are impossible.
+- Class rates (full): vulgar ~24.9%, threat ~14.0%, troll ~28.4%, insult ~28.5%, neutral ~35.7%.
 
-> **Expected effect on numbers:** the `threat` score will look more modest than the previous
-> ~0.88 (that was partly leakage), while `troll`/`insult` **precision** should improve because
-> the label-noise (mixup) and over-prediction (stacked weighting) are gone. The headline
-> macro-F1 becomes trustworthy rather than optimistic.
+Both notebooks **split before doing anything else** and assert `train ∩ val = train ∩ test = 0`.
 
 ---
 
-## 3. Pipeline (cell by cell)
+## 1. Track 1 — lightweight ~10M (improved, `bengali-cyberbullying-lightweight-v4.ipynb`)
 
-1. **Setup & imports** — seeds, device, GPU detection (prints each T4).
-2. **Config** — all hyperparameters (see §4 & §5).
-3. **Load + clean + dedup + derive neutral** — clean text (URLs/mentions/emoji/punct stripped,
-   Bengali range kept), drop `< MIN_WORDS`, **dedup on `clean_text`**, set `neutral = NOT(any toxic)`.
-4. *(markdown)* why we split before augmenting.
-5. **Stratified split BEFORE augmentation** — `MultilabelStratifiedShuffleSplit` 70/15/15;
-   records `VAL_TEST_TEXTS` for the leakage guard.
-6. *(markdown)* train-only augmentation rationale.
-7. **Threat augmentation (train only)** — swap / deletion / pseudo-synonym; drops any augmented
-   text colliding with val/test; **asserts zero leakage** and **neutral consistency**.
-8. **EDA** — train per-class counts, toxic-labels-per-comment, token-length distribution.
-9. **Vocab build (train only)** — word vocab (`MIN_FREQ=2`, cap `30000`) + char vocab; prints val OOV.
-10. **FastText `cc.bn.300`** — streamed, only vocab words kept; OOV words get scaled random init;
-    prints coverage.
-11. **Dataset & DataLoaders** — targets are the **4 toxic** labels; word-dropout on train.
-12. **Model build** — prints param count and the `~10M` check; wraps in `nn.DataParallel` if `>1` GPU.
-13. **Loss + optimizer + scheduler** — Focal (no `pos_weight` by default); AdamW; warmup + cosine.
-14. **Training loop** — two-phase (freeze → unfreeze at epoch 20 with differential LR), **no mixup,
-    no SWA**; early stopping on 5-class val macro-F1; restores best weights.
-15. **Curves** — loss, macro-F1, per-class F1, LR.
-16. **Threshold tuning** — per-class grid search on the clean val set within `[0.30, 0.70]`.
-17. **Final test eval** — predict toxic, **derive neutral**, report macro/micro/weighted/samples
-    F1, Hamming, ROC-AUC, PR-AUC, and a full per-class classification report (all 5 classes).
-18. *(markdown)* ensemble strategy.
-19. **Ensemble impl** — `train_with_seed` (consistent with the corrected pipeline) + probability averaging.
-20. **Save** — checkpoint (`.pt`) + `v5_summary.json`.
-21. *(markdown)* notes on honest evaluation and where future gains live.
+### Why it changed
+The previous corrected run was leakage-free but **overfit early**: validation Macro-F1 peaked at
+epoch ~11 (≈0.72) while training F1 ran to 0.86. A ~10M-param model is over-capacity for only ~12k
+short comments. This version attacks overfitting directly.
 
----
+### What changed (vs the previous corrected run)
+1. **All-class train-only augmentation** (was threat-only). Every category is augmented up to a
+   per-class target (rarer classes pulled up more) via word swap / deletion / pseudo-synonym, which
+   expands the training set from ~12k to **~20.7k** so the 10M-param model has enough data.
+2. **Vocab is built on the *original* (pre-augmentation) training text.** This is important: the
+   char-noise augmentation invents tokens; if the vocab were built after augmentation it grew to
+   ~14k and pushed the model to **11.3M params**. Building it on the original text keeps the
+   embedding bounded and the total at **~9.45M**; augmented-only tokens map to `<UNK>`.
+3. **Stronger regularization:** word-dropout 0.15→0.25, embedding spatial-dropout 0.35→0.40,
+   weight-decay 1e-4→3e-4.
+4. **Calmer optimization:** peak LR 1.2e-3→7e-4, warmup 8%→12% (smooths the noisy val curve).
+5. **Earlier embedding unfreeze** (epoch 20→7 at 0.1× LR) so phase-2 actually runs before early stop.
 
-## 4. Model architecture (~9.74M parameters)
-
+### Architecture (~9.45M params; ~10M target met)
 ```
-word_ids ─► Embedding(VOCAB, 300, frozen←FastText) ─► Linear→256 ─┐
-                                                                   ├─ concat ─► SpatialDropout
-char_ids ─► CharCNN(emb 32, filters 64 × kernels {2,3,4} = 192) ──┘            │
-                                                                                ▼
-                                            TextCNN(in=448, filters 224 × {2,3,4})
-                                                                                │
-                                                                                ▼
-                                              BiGRU(hidden 368 × 2 layers, bidir)
-                                                                                │
-                          ┌──────────── attention ctx ┐  ┌ max-pool ┐  ┌ mean-pool ┐
-                          └──────────────────── concat (3 × 736 = 2208) ───────────┘
-                                                                                │
-                                          Linear→320 ─► (multi-sample dropout) ─► Linear→4
+word_ids ─► Embedding(VOCAB≈8–9k, 300, frozen←FastText) ─► Linear→256 ─┐
+                                                                        ├─ concat ─► SpatialDropout
+char_ids ─► CharCNN(emb 32, filters 64 × {2,3,4} = 192) ───────────────┘            │
+                                              TextCNN(filters 224 × {2,3,4}) ────────┘
+                                              BiGRU(hidden 368 × 2, bidir)
+                       attention ctx ⊕ max-pool ⊕ mean-pool ─► Linear→320 ─► (5× dropout) ─► Linear→4
 ```
+Embedding (frozen FastText) is the only piece that scales with vocab; everything else is fixed, so
+the parameter count stays in the 8.5–11M band (the notebook prints the exact count + an OK/ADJUST flag).
 
-**Verified parameter breakdown (VOCAB=9155):**
-
-| Module | Params |
-|---|---|
-| BiGRU | ~5.10M |
-| word_embed (frozen FastText) | ~2.75M |
-| TextCNN | ~0.90M |
-| fc1 | ~0.74M |
-| attention | ~0.59M |
-| projection / char_cnn / fc2 | ~0.10M |
-| **Total** | **9,742,632 (9.74M)** |
-
-Trainable while embeddings are frozen: ~7.0M; all 9.74M become trainable after the unfreeze epoch.
-Counts scale slightly with the realized vocab size; the notebook prints the exact number and an
-`OK / ADJUST` flag (target band 8.5M–11M).
+### Loss & decoding
+Focal loss (γ=2.0, smoothing 0.05) **without** `pos_weight` (balance comes from augmentation), then
+per-class threshold tuning in `[0.30, 0.70]`. Multi-seed ensemble (`train_with_seed`) is provided.
 
 ---
 
-## 5. Key hyperparameters
+## 2. Track 2 — transformer (`bengali-cyberbullying-transformer.ipynb`)
 
-| Group | Setting |
-|---|---|
-| Split | 70 / 15 / 15, multilabel-stratified, seed 42 |
-| Max length | 80 tokens; 16 chars/word |
-| Embeddings | FastText `cc.bn.300`, frozen until epoch 20, then unfrozen at 0.1× LR |
-| Optimizer | AdamW, LR 1.2e-3, weight decay 1e-4 |
-| Schedule | 8% warmup + cosine decay; phase-2 linear decay |
-| Loss | Focal (γ=2.0), label smoothing 0.03, **no pos_weight** |
-| Regularization | spatial dropout 0.35, dropout 0.5, word-dropout 0.15, 5-sample dropout head |
-| Augmentation | threat ×2, **train split only** |
-| Epochs / early stop | 30 epochs, patience 6 (restores best) |
-| Thresholds | per-class grid search in [0.30, 0.70] |
+The real accuracy unlock: fine-tune a pretrained Bengali encoder.
 
----
-
-## 6. Running on Kaggle (2x T4)
-
-1. **Accelerator:** Notebook → Settings → **GPU T4 x2**. The notebook auto-detects both GPUs and
-   wraps the model in `nn.DataParallel`; the effective batch size becomes `64 × num_gpus = 128`.
-2. **Dataset:** attach the CSV dataset. The loader checks several common Kaggle paths plus the
-   local filename; adjust `Config.DATA_PATH` if your dataset slug differs.
-3. **FastText:** cell 10 downloads `cc.bn.300.vec.gz` (~1.2 GB) if it is not already attached as a
-   dataset. To skip the download, attach it as a Kaggle dataset and point one of the candidate
-   paths at it.
-4. **Run all.** Outputs produced: `v5_training_curves.png`, `bengali_cyberbullying_v5_best.pt`,
-   `v5_summary.json`.
-5. **Optional ensemble:** run `all_probs = [train_with_seed(s) for s in cfg.ENSEMBLE_SEEDS]` then
-   `ensemble(all_probs, tuned)` for a small additional gain (needs the GPU budget for 3 runs).
-
-> **Note on multi-GPU:** `nn.DataParallel` is used (single-process, splits each batch across both
-> T4s) because it requires no launcher changes and works out-of-the-box in a Kaggle notebook.
-> `DistributedDataParallel` is faster but needs a multi-process launch that Kaggle notebooks do
-> not provide conveniently.
+- **Backbone:** tries `csebuetnlp/banglabert` → `google/muril-base-cased` → `xlm-roberta-base`
+  (first that loads wins). ~110M params — **intentionally over the 10M budget**.
+- **Head:** encoder → masked **mean-pooling** → dropout → `Linear(hidden, 4)`. Loss = multi-label
+  Focal (γ=2.0). Neutral derived exactly as in Track 1.
+- **Cleaning is lighter** than the lightweight model (keeps punctuation/natural text; only strips
+  URLs/mentions/emoji) because transformers benefit from natural text.
+- **Optimization:** AdamW with no weight-decay on bias/LayerNorm, **higher LR for the new head**
+  (1e-4) vs encoder (2e-5), linear warmup schedule, **mixed precision (AMP)**, gradient clipping,
+  4 epochs with early stopping. **No synthetic augmentation** (pretrained + few epochs + weight
+  decay generalizes well on ~12k samples).
+- **Multi-GPU:** `nn.DataParallel` over both T4s; AMP keeps memory in budget. Lower
+  `BATCH_SIZE_PER_GPU` or `MAX_LEN` if you hit OOM.
+- For best BanglaBERT results, optionally add the authors' normalizer
+  (`pip install git+https://github.com/csebuetnlp/normalizer`) inside `light_clean`.
 
 ---
 
-## 7. How this was verified (offline, no GPU)
+## 3. Running on Kaggle (both notebooks)
 
-A CPU harness compiled and executed the notebook's cells:
-
-- **All 17 code cells compile.**
-- **Full-data pipeline:** `train∩val = 0`, `train∩test = 0`; derived neutral consistent in every
-  split; **total params = 9,742,632 (9.74M)** → within the ~10M band.
-- **Full flow on a subsample** (train → threshold tuning → test → save) executes end-to-end;
-  predicted `neutral` has **zero** contradictions with toxic predictions; checkpoint and summary
-  are written.
-
-(The subsample run uses 2 epochs and zeroed embeddings purely to exercise control flow, so its
-metric values are not meaningful — only the real Kaggle T4x2 run produces the reported scores.)
+1. Accelerator: **GPU T4 x2**. Both notebooks auto-detect 2 GPUs and wrap the model in
+   `nn.DataParallel` (effective batch = per-GPU batch × 2).
+2. Attach the CSV dataset; the loaders probe several common Kaggle paths plus the local filename.
+3. Lightweight notebook downloads FastText `cc.bn.300.vec.gz` (~1.2 GB) on first run (attach it as a
+   dataset to skip). Transformer notebook downloads the HF model weights (~110M) on first run.
+4. Run All. Outputs:
+   - Lightweight: `v6_training_curves.png`, `bengali_cyberbullying_v6_lightweight.pt`, `v6_summary.json`.
+   - Transformer: `transformer_curves.png`, `bengali_transformer_best.pt`, `transformer_summary.json`.
+5. Optional ensemble (lightweight): `all_probs = [train_with_seed(s) for s in cfg.ENSEMBLE_SEEDS]`.
 
 ---
 
-## 8. Where further accuracy gains live
+## 4. Offline verification performed (CPU, no GPU / no big downloads)
 
-- **`troll` / `insult`** are the hardest, most subjective, and mutually overlapping classes —
-  the best next step is label cleaning / re-adjudication and targeted error analysis.
-- **Backbone upgrade:** if the ~10M-parameter budget can be relaxed, fine-tuning a pretrained
-  Bengali transformer (BanglaBERT / MuRIL / XLM-R) is the single biggest lever and also removes
-  the ~15% OOV issue inherent to word-level FastText.
-- **Manifold mixup** (mixing GRU/feature representations, not token IDs) could be added correctly,
-  but needs care under `nn.DataParallel`; it was intentionally left out to keep the pipeline correct.
+Both notebooks were executed cell-by-cell on CPU via a harness (FastText stubbed for Track 1; a tiny
+`prajjwal1/bert-tiny` backbone substituted for Track 2; training subsampled to a couple hundred rows
+and 1–2 epochs purely to exercise control flow):
+
+- **Track 1:** all 17 code cells compile; on **full data** `train∩val=0`, `train∩test=0`, neutral
+  consistent, training expands 10,677 → **20,707**, and **total params = 9,450,732 (9.45M, "OK")**.
+  The full train→threshold→test→save flow runs and predicted `neutral` has **0 contradictions**.
+- **Track 2:** all 12 code cells compile; tokenizer → model → AMP-aware train loop → threshold →
+  test → save runs end-to-end; predicted `neutral` has **0 contradictions**; artifacts saved.
+
+(Subsampled/stub metric values are meaningless by design — only the real Kaggle T4x2 runs produce the
+reported scores.)
+
+---
+
+## 5. Where remaining accuracy lives
+
+- `troll` and `insult` are the hardest, most subjective, and mutually overlapping classes (~1000
+  co-occurrences). This is a **label-quality ceiling** for both tracks — error analysis and
+  re-adjudication of ambiguous `troll`/`insult` cases is the highest-value data-side step.
+- Track 2 (transformer) is the biggest model-side lever and also removes the ~15% OOV problem that
+  word-level FastText cannot solve.
+- Optional: ensemble the two tracks (average probabilities) for a small additional, complementary gain.
