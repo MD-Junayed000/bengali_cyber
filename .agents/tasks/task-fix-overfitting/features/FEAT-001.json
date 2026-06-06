@@ -2,7 +2,7 @@
   "id": "FEAT-001",
   "type": "fix",
   "description": "Fix overfitting in Track 1 (lightweight model) by applying stronger regularization and training discipline. The model shows clear overfitting after epoch 10: train F1 rises to 0.87 while val F1 plateaus at ~0.78 with a gap of +0.10. The strategy is multi-pronged: (1) stronger weight decay, (2) aggressive learning rate reduction post-unfreeze, (3) reduced training epochs, (4) tighter early stopping, (5) increased label smoothing, (6) R-Drop consistency regularization, and (7) cosine annealing with warm restarts.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Step 1 - Modify Config class in cell 2 of bengali-cyberbullying-lightweight-v4.ipynb with these anti-overfitting changes: (a) Reduce EPOCHS from 35 to 25 (overfitting is clear by epoch 14-15, no need for 35), (b) Reduce PATIENCE from 8 to 5 (stop earlier when no improvement), (c) Increase WEIGHT_DECAY from 1e-3 to 3e-3 (stronger L2 regularization), (d) Increase LABEL_SMOOTHING from 0.05 to 0.10 (more label noise = harder to memorize), (e) Reduce LR from 8e-4 to 5e-4 (slower learning = less overfitting), (f) Reduce UNFREEZE_BODY_LR_FACTOR from 0.30 to 0.15 (halve the post-unfreeze body LR to slow memorization), (g) Reduce UNFREEZE_EMB_LR_FACTOR from 0.05 to 0.02 (even gentler embedding fine-tuning), (h) Add MIXUP_ALPHA = 0.3 (new config for mixup augmentation), (i) Add RDROP_ALPHA = 0.7 (new config for R-Drop KL-divergence regularization), (j) Increase AUG_COPIES from 1 to 2 (more augmented data = harder to memorize training set), (k) Increase DROPOUT from 0.5 to 0.55, (l) Increase NUM_DROPOUT_SAMPLES from 5 to 8 (more multi-sample dropout = stronger regularization during training)",
     "Step 2 - Add Mixup implementation to the training cell (cell 14). Add a mixup_data function before train_one_epoch that takes (word_ids, char_ids, labels, alpha) and returns mixed inputs/targets using Beta(alpha, alpha) distribution. Modify train_one_epoch to apply mixup on each batch when cfg.MIXUP_ALPHA > 0. Mixup blends pairs of examples, preventing the model from memorizing individual samples.",
@@ -24,5 +24,5 @@
     "python3 -c \"import json; nb=json.load(open('bengali-cyberbullying-lightweight-v4.ipynb')); cfg_src=''.join(nb['cells'][2]['source']); assert 'MIXUP_ALPHA' in cfg_src; assert 'RDROP_ALPHA' in cfg_src; assert 'EPOCHS = 25' in cfg_src or 'EPOCHS=25' in cfg_src; print('Config updated correctly')\""
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "Cell 1 has a pre-existing SyntaxError when ast.parse is run (Jupyter magic !pip install). This is not caused by our changes and only affects cell 1. All other code cells parse correctly. The test_command in context.json will fail on cell 1 but this is unrelated to FEAT-001."
 }
