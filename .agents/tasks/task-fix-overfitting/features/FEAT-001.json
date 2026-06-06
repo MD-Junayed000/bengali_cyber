@@ -1,0 +1,28 @@
+{
+  "id": "FEAT-001",
+  "type": "fix",
+  "description": "Fix overfitting in Track 1 (lightweight model) by applying stronger regularization and training discipline. The model shows clear overfitting after epoch 10: train F1 rises to 0.87 while val F1 plateaus at ~0.78 with a gap of +0.10. The strategy is multi-pronged: (1) stronger weight decay, (2) aggressive learning rate reduction post-unfreeze, (3) reduced training epochs, (4) tighter early stopping, (5) increased label smoothing, (6) R-Drop consistency regularization, and (7) cosine annealing with warm restarts.",
+  "status": "in_progress",
+  "steps": [
+    "Step 1 - Modify Config class in cell 2 of bengali-cyberbullying-lightweight-v4.ipynb with these anti-overfitting changes: (a) Reduce EPOCHS from 35 to 25 (overfitting is clear by epoch 14-15, no need for 35), (b) Reduce PATIENCE from 8 to 5 (stop earlier when no improvement), (c) Increase WEIGHT_DECAY from 1e-3 to 3e-3 (stronger L2 regularization), (d) Increase LABEL_SMOOTHING from 0.05 to 0.10 (more label noise = harder to memorize), (e) Reduce LR from 8e-4 to 5e-4 (slower learning = less overfitting), (f) Reduce UNFREEZE_BODY_LR_FACTOR from 0.30 to 0.15 (halve the post-unfreeze body LR to slow memorization), (g) Reduce UNFREEZE_EMB_LR_FACTOR from 0.05 to 0.02 (even gentler embedding fine-tuning), (h) Add MIXUP_ALPHA = 0.3 (new config for mixup augmentation), (i) Add RDROP_ALPHA = 0.7 (new config for R-Drop KL-divergence regularization), (j) Increase AUG_COPIES from 1 to 2 (more augmented data = harder to memorize training set), (k) Increase DROPOUT from 0.5 to 0.55, (l) Increase NUM_DROPOUT_SAMPLES from 5 to 8 (more multi-sample dropout = stronger regularization during training)",
+    "Step 2 - Add Mixup implementation to the training cell (cell 14). Add a mixup_data function before train_one_epoch that takes (word_ids, char_ids, labels, alpha) and returns mixed inputs/targets using Beta(alpha, alpha) distribution. Modify train_one_epoch to apply mixup on each batch when cfg.MIXUP_ALPHA > 0. Mixup blends pairs of examples, preventing the model from memorizing individual samples.",
+    "Step 3 - Add R-Drop (Regularized Dropout) to the training cell (cell 14). In train_one_epoch, when RDROP_ALPHA > 0, run the model twice on the same batch (with different dropout masks) to get logits1 and logits2. Compute symmetric KL divergence between sigmoid(logits1) and sigmoid(logits2). Add cfg.RDROP_ALPHA * kl_loss to the main focal loss. This penalizes the model for being sensitive to dropout, which is a powerful regularizer.",
+    "Step 4 - Modify the cosine scheduler in cell 13 to use a cosine-with-restarts pattern. After unfreeze, instead of a single cosine decay, use cosine annealing that restarts every 5 epochs (T_mult=1). This periodically resets the LR which helps escape sharp minima that overfit. The lr_lambda function should implement warm restarts: cycle_len=5, min_lr_fraction=0.01.",
+    "Step 5 - Add a gradient penalty (gradient norm regularization) to train_one_epoch. After computing the loss but before backward, add a penalty term: if the gradient norm exceeds 0.5, add a soft penalty (grad_norm - 0.5)^2 * 0.01 to the loss. This keeps gradients smooth and prevents the model from learning sharp decision boundaries that overfit. Actually, simpler approach: reduce GRAD_CLIP from 1.0 to 0.5 in the Config to achieve similar effect.",
+    "Step 6 - Update the SWA configuration: change SWA_START_OFFSET from 3 to 2 (start averaging earlier after unfreeze, capturing more of the plateau). Also update GRAD_CLIP from 1.0 to 0.5 in Config."
+  ],
+  "acceptance_criteria": [
+    "The notebook parses as valid JSON",
+    "All code cells parse as valid Python (ast.parse succeeds)",
+    "Config class has updated hyperparameters: EPOCHS=25, PATIENCE=5, WEIGHT_DECAY=3e-3, LABEL_SMOOTHING=0.10, LR=5e-4, UNFREEZE_BODY_LR_FACTOR=0.15, UNFREEZE_EMB_LR_FACTOR=0.02, MIXUP_ALPHA=0.3, RDROP_ALPHA=0.7, AUG_COPIES=2, DROPOUT=0.55, NUM_DROPOUT_SAMPLES=8, GRAD_CLIP=0.5, SWA_START_OFFSET=2",
+    "train_one_epoch function includes mixup logic and R-Drop KL divergence loss",
+    "The lr_lambda function implements cosine annealing with warm restarts (cycle length 5)"
+  ],
+  "verification": [
+    "python3 -c \"import json; nb=json.load(open('bengali-cyberbullying-lightweight-v4.ipynb')); print('Valid JSON')\"",
+    "python3 -c \"import json, ast; nb=json.load(open('bengali-cyberbullying-lightweight-v4.ipynb')); [ast.parse(''.join(c['source'])) for c in nb['cells'] if c['cell_type']=='code']; print('All cells valid Python')\"",
+    "python3 -c \"import json; nb=json.load(open('bengali-cyberbullying-lightweight-v4.ipynb')); cfg_src=''.join(nb['cells'][2]['source']); assert 'MIXUP_ALPHA' in cfg_src; assert 'RDROP_ALPHA' in cfg_src; assert 'EPOCHS = 25' in cfg_src or 'EPOCHS=25' in cfg_src; print('Config updated correctly')\""
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}
