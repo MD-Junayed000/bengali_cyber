@@ -1,0 +1,30 @@
+{
+  "id": "FEAT-003",
+  "type": "docs",
+  "description": "Update plan.md with comprehensive architecture comparison between v6 hierarchical and Track 2 transformer, including actual results, analysis of why v6 outperforms, and the updated status of all tracks.",
+  "status": "completed",
+  "steps": [
+    "Read the current plan.md",
+    "Rewrite plan.md to reflect the ACTUAL current state: v6 hierarchical is the PRIMARY best performer (F1=0.8551, 3.3M params), Track 2 transformer is secondary (F1=0.8428, ~110M params), Track 1 lightweight-v4 is deprecated (F1=0.7958, ~10M params)",
+    "Add a detailed architecture comparison section with: (a) v6 Hierarchical architecture diagram (CharCNN+FastText -> projection -> TextCNN -> BiGRU -> Attention -> Stage1 binary head + Stage2 multi-label head), (b) Track 2 architecture (BanglaBERT -> mean-pool -> LayerNorm -> multi-sample dropout -> linear head), (c) side-by-side comparison table",
+    "Add a section explaining WHY v6 outperforms the transformer: (1) hierarchical decomposition provides better gradient signal for minority classes, (2) stage2-toxic-only training isolates class-specific signal, (3) probabilistic chain P(class)=P(toxic)*P(class|toxic) provides natural calibration, (4) dataset size (12.7k) is suboptimal for 110M params, (5) task-specific architecture beats general-purpose fine-tuning for this data regime",
+    "Add per-class comparison table: show v6 vs Track 2 per-class F1 for vulgar, threat, insult, neutral",
+    "Add parameter efficiency analysis: F1-per-million-parameters metric, CPU deployability, inference speed considerations",
+    "Add literature comparison table matching what is in the notebooks",
+    "Remove outdated content about troll+insult merge and 5-class labels (the current notebooks use vulgar, threat, insult, neutral - 4 classes)",
+    "Add section on potential improvements for both models"
+  ],
+  "acceptance_criteria": [
+    "plan.md clearly establishes v6 as primary best performer",
+    "Architecture comparison section exists with diagrams for both models",
+    "Per-class metrics comparison table is present",
+    "Analysis of why v6 outperforms transformer is clear and well-reasoned",
+    "Outdated references to troll/insult merge are removed",
+    "Literature comparison table is present"
+  ],
+  "verification": [
+    "python3 -c \"f=open('plan.md'); c=f.read(); assert 'v6' in c and 'hierarchical' in c and '0.8551' in c and 'Track 2' in c; print('plan.md contains required content')\""
+  ],
+  "blocked_reason": null,
+  "findings": "Completely rewrote plan.md from scratch. Removed all outdated references to troll/insult merge, flaming class, and 5-class setup. New plan includes: (1) status summary table, (2) dataset overview, (3) ASCII architecture diagrams for both models, (4) per-class F1 comparison table, (5) overall metrics comparison, (6) 5-point analysis of why v6 outperforms transformer, (7) parameter efficiency analysis with F1-per-million-params, (8) literature comparison table with 7 published works, (9) track status for all 3 models, (10) potential improvements section, (11) running instructions for Kaggle T4x2. All verification checks pass: no em dashes, no outdated references, required content present."
+}

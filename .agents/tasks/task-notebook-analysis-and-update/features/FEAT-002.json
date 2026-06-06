@@ -1,0 +1,30 @@
+{
+  "id": "FEAT-002",
+  "type": "docs",
+  "description": "Update bengali-cyberbullying-transformer.ipynb (Track 2): enhance markdown cells, add literature comparison with v6 results showing parameter efficiency, add meaningful visualizations (currently has minimal viz - only training curves), and update documentation to clearly position this as the secondary track.",
+  "status": "completed",
+  "steps": [
+    "Read the full transformer notebook structure from bengali-cyberbullying-transformer.ipynb",
+    "Update Cell 0 (title markdown): Rewrite to position as Track 2. Add comparison summary showing that while this model (110M params) achieves F1=0.8428, the lightweight hierarchical v6 (3.3M params) achieves F1=0.8551. Explain the trade-off: transformer has better ROC-AUC (0.9617 vs 0.9526) but worse F1 due to threshold sensitivity, and is 33x larger.",
+    "Add a new markdown cell after Section 4 (after the split): Add a brief EDA section with visualization showing class distribution in the split data.",
+    "Update Cell 14 (Section 14 notes markdown): Expand notes to include detailed analysis of why the transformer underperforms the hierarchical model despite having 33x more parameters. Key reasons: (1) the hierarchical two-stage approach provides better gradient flow for minority classes, (2) stage2-toxic-only training eliminates neutral noise, (3) the dataset (12.7k samples) is relatively small for fine-tuning 110M params, (4) the reconstruction formula P(class)=P(toxic)*P(class|toxic) provides built-in calibration.",
+    "Add a new code cell before the final markdown (before Cell 14): Add a comprehensive visualization section including: (a) per-class precision/recall/F1 bar chart, (b) confusion matrices for all 4 classes, (c) ROC and PR curves, (d) comparison bar chart showing v6 vs transformer per-class F1 side by side.",
+    "Add a literature comparison code cell: Create a comparison table similar to v6 but including both our models. Show parameter count, F1, ROC-AUC, CPU-deployable flag. Add same literature references as v6 notebook for consistency.",
+    "Add a conclusion markdown cell: Summarize that while Track 2 validates the approach on a pretrained model, the hierarchical lightweight model (Track 1 primary / v6) is preferred due to: 33x smaller, better F1, CPU-deployable, and faster inference.",
+    "Validate the entire notebook JSON is valid and all code cells parse with ast.parse()"
+  ],
+  "acceptance_criteria": [
+    "All markdown cells contain clear analysis of the transformer approach and its comparison to v6",
+    "At least 3 new meaningful visualizations are added (per-class metrics bar chart, confusion matrices, comparison chart)",
+    "A literature comparison table is present with the same references as v6 notebook plus both internal models",
+    "The notebook clearly states that v6 hierarchical (3.3M) outperforms this transformer (110M) at F1",
+    "Notebook validates as valid JSON",
+    "All code cells parse with ast.parse() without errors"
+  ],
+  "verification": [
+    "python3 -c \"import json; json.load(open('bengali-cyberbullying-transformer.ipynb')); print('Valid JSON')\"",
+    "python3 -c \"import json, ast; nb=json.load(open('bengali-cyberbullying-transformer.ipynb')); [ast.parse(''.join(c['source'])) for c in nb['cells'] if c['cell_type']=='code']; print('All cells parse OK')\""
+  ],
+  "blocked_reason": null,
+  "findings": "Notebook updated from 15 to 21 cells. Added: (1) rewritten title/intro markdown with v6 vs transformer comparison table, (2) expanded Section 4 markdown with data characteristics analysis, (3) EDA visualization cell showing class distribution across splits, (4) per-class precision/recall/F1 bar chart, (5) confusion matrices for all 4 classes, (6) ROC and PR curves, (7) side-by-side v6 vs transformer comparison chart, (8) literature comparison table with 7 published works + 2 internal models, (9) significantly expanded Section 14 with detailed analysis of why transformer underperforms v6. Pre-existing issue: Cell 1 !pip magic fails ast.parse (same as v6 notebook, documented in FEAT-001). All other code cells parse correctly. Original outputs preserved in all cells."
+}
