@@ -1,0 +1,20 @@
+{
+  "project_type": "Jupyter Notebook ML project (Bengali cyberbullying multi-label classification)",
+  "language": "Python (inside .ipynb JSON files)",
+  "build_system": "None (Jupyter notebooks, designed for Kaggle with T4 x2 GPUs)",
+  "test_framework": "None (validation is ensuring valid JSON and valid Python AST in all code cells)",
+  "build_command": "python3 -c \"import json; json.load(open('bengali-cyberbullying-lightweight-v4.ipynb')); json.load(open('bengali-cyberbullying-transformer.ipynb')); print('Both notebooks are valid JSON')\"",
+  "test_command": "python3 -c \"\nimport json, ast\nfor nb_path in ['bengali-cyberbullying-lightweight-v4.ipynb', 'bengali-cyberbullying-transformer.ipynb']:\n    nb = json.load(open(nb_path))\n    for i, cell in enumerate(nb['cells']):\n        if cell['cell_type'] == 'code':\n            src = ''.join(cell['source'])\n            try:\n                ast.parse(src)\n            except SyntaxError as e:\n                raise RuntimeError(f'{nb_path} cell {i}: {e}')\n    print(f'{nb_path}: all cells parse OK')\n\"",
+  "verification_instructions": "1. Run build_command to verify JSON validity. 2. Run test_command to verify all Python cells parse. 3. Grep for old dataset references to confirm they are removed. 4. Verify MERGE_TROLL_INSULT is removed. 5. Verify new hyperparameters match specification.",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "No setup needed - these are .ipynb JSON files edited directly",
+  "environment_constraints": "OPEN_INTERNET mode. Notebooks are designed to run on Kaggle, not locally. Validation is AST-level only.",
+  "contribution_requirements": "Commit changes to both notebooks with a descriptive message.",
+  "key_patterns": "Both notebooks follow the same pattern: Config class in Section 2, data loading in Section 3, training loop with SWA/R-Drop. Track 1 has CharCNN+FastText+TextCNN+BiGRU+Attention (~10M params). Track 2 has BanglaBERT+mean-pool+linear (~110M params). Both derive neutral as NOT(any toxic).",
+  "relevant_files": [
+    "bengali-cyberbullying-lightweight-v4.ipynb",
+    "bengali-cyberbullying-transformer.ipynb",
+    "final_bengali_comments_vulgar_threat_insult_neutral.csv"
+  ],
+  "directory_structure": "Root contains two .ipynb notebooks and one CSV dataset file. The .agents/ directory has task state."
+}
