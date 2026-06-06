@@ -1,0 +1,28 @@
+{
+  "id": "FEAT-002",
+  "type": "fix",
+  "description": "Fix overfitting in Track 2 (transformer model) by applying comprehensive regularization. The model shows severe overfitting: train loss drops to 0.011 while val loss rises to 0.148 (14x gap). Val F1 reaches 0.8295 at epoch 5 but train loss is already 0.022 - extreme memorization. Strategy: (1) add layer-wise learning rate decay (LLRD) so lower transformer layers learn slower, (2) add label smoothing, (3) increase dropout significantly, (4) add weight-tied dropout in the pooling head, (5) freeze lower N layers initially, (6) add R-Drop consistency loss, (7) reduce effective learning rate, (8) increase warmup ratio, (9) use cosine schedule instead of linear decay.",
+  "status": "completed",
+  "steps": [
+    "Step 1 - Modify Config class in cell 2 of bengali-cyberbullying-transformer.ipynb with these anti-overfitting changes: (a) Reduce LR from 2e-5 to 1.5e-5, (b) Reduce HEAD_LR from 1e-4 to 5e-5, (c) Increase DROPOUT from 0.2 to 0.4 (double it - 0.2 is far too low for 110M params on 15k rows), (d) Increase LABEL_SMOOTHING from 0.0 to 0.10, (e) Increase WARMUP_RATIO from 0.1 to 0.2 (longer warmup = slower start), (f) Increase PATIENCE from 2 to 3 (allow slight exploration), (g) Increase WEIGHT_DECAY from 0.01 to 0.03, (h) Add LLRD_FACTOR = 0.9 (layer-wise LR decay factor), (i) Add RDROP_ALPHA = 1.0 (R-Drop KL regularization weight), (j) Add FREEZE_LAYERS = 4 (freeze bottom 4 transformer layers entirely), (k) Add HIDDEN_DROPOUT = 0.1 (additional dropout applied to encoder hidden states before pooling), (l) Add MAX_GRAD_NORM = 0.5 (reduce from 1.0 to limit gradient magnitude)",
+    "Step 2 - Modify the Model class in cell 7 to add stronger regularization in the architecture: (a) Add a second dropout layer (hidden_dropout) applied to the encoder output before mean pooling, (b) Add multi-sample dropout: during training, run the classifier head with N=5 different dropout masks and average the logits (similar to Track 1's approach). This acts as a strong implicit ensemble regularizer. (c) Add a LayerNorm before the classifier head.",
+    "Step 3 - Modify the Optimizer setup in cell 8 to implement LLRD (Layer-wise Learning Rate Decay). Instead of a single LR for all encoder params, assign geometrically decaying LRs: layer 0 gets LR * LLRD_FACTOR^11, layer 11 gets LR * LLRD_FACTOR^0 (for a 12-layer model). Also freeze the bottom cfg.FREEZE_LAYERS layers (set requires_grad=False for their parameters). Replace the linear schedule with a cosine schedule (cosine decay to 0 without warmup restarts, using get_cosine_schedule_with_warmup from transformers).",
+    "Step 4 - Modify the training loop in cell 9 to add R-Drop regularization: (a) In train_one_epoch, run the model twice on the same batch to get logits1 and logits2 (with different dropout masks since model is in train mode). (b) Compute symmetric KL divergence between sigmoid(logits1) and sigmoid(logits2). (c) Add cfg.RDROP_ALPHA * kl_loss to the main loss. (d) Use (logits1 + logits2) / 2 for the focal loss computation to get a more stable gradient. Also update the grad clip to use cfg.MAX_GRAD_NORM (0.5) instead of the old cfg.GRAD_CLIP (1.0)."
+  ],
+  "acceptance_criteria": [
+    "The notebook parses as valid JSON",
+    "All code cells parse as valid Python (ast.parse succeeds)",
+    "Config class has: LR=1.5e-5, HEAD_LR=5e-5, DROPOUT=0.4, LABEL_SMOOTHING=0.10, WARMUP_RATIO=0.2, PATIENCE=3, WEIGHT_DECAY=0.03, LLRD_FACTOR=0.9, RDROP_ALPHA=1.0, FREEZE_LAYERS=4, HIDDEN_DROPOUT=0.1, MAX_GRAD_NORM=0.5",
+    "TransformerClassifier model includes multi-sample dropout and hidden_dropout and LayerNorm before classifier",
+    "Optimizer cell implements LLRD with per-layer LR groups and freezes bottom 4 layers",
+    "Training loop includes R-Drop (dual forward pass + KL divergence loss)",
+    "Schedule is cosine (get_cosine_schedule_with_warmup) instead of linear"
+  ],
+  "verification": [
+    "python3 -c \"import json; nb=json.load(open('bengali-cyberbullying-transformer.ipynb')); print('Valid JSON')\"",
+    "python3 -c \"import json, ast; nb=json.load(open('bengali-cyberbullying-transformer.ipynb')); [ast.parse(''.join(c['source'])) for c in nb['cells'] if c['cell_type']=='code']; print('All cells valid Python')\"",
+    "python3 -c \"import json; nb=json.load(open('bengali-cyberbullying-transformer.ipynb')); cfg_src=''.join(nb['cells'][2]['source']); assert 'LLRD_FACTOR' in cfg_src; assert 'RDROP_ALPHA' in cfg_src; assert 'FREEZE_LAYERS' in cfg_src; print('Config updated correctly')\""
+  ],
+  "blocked_reason": null,
+  "findings": "All changes implemented and verified. JSON valid, all code cells parse as valid Python (excluding !pip lines in cell 1). The notebook now has comprehensive anti-overfitting regularization: LLRD, R-Drop, multi-sample dropout (5 masks), hidden dropout, LayerNorm, layer freezing (bottom 4 + embeddings), cosine schedule, increased weight decay and dropout, label smoothing. The GRAD_CLIP config key was replaced with MAX_GRAD_NORM (0.5) so any downstream cells referencing cfg.GRAD_CLIP would need updating, but the training loop in cell 9 already uses cfg.MAX_GRAD_NORM."
+}
