@@ -1,0 +1,14 @@
+{
+  "task_id": "task-notebook-analysis-and-update",
+  "task_description": "Analyze and update both Bengali cyberbullying detection notebooks (v6 hierarchical primary, transformer Track 2 secondary). Update all markdown documentation, add literature comparison tables with previous research, add/improve visualizations, update plan.md with architecture comparison. Key finding: v6 hierarchical (3.3M params, F1=0.8551) outperforms transformer (110M params, F1=0.8428) while being 33x smaller and CPU-deployable.",
+  "status": "completed",
+  "feature_order": ["FEAT-001", "FEAT-002", "FEAT-003"],
+  "blocked_reason": null,
+  "verification": {
+    "build": "pass",
+    "tests": "pass",
+    "test_quality": "pass",
+    "docker_build": "skipped",
+    "summary": "All 3 notebooks validate as JSON. All code cells parse with ast.parse (excluding Jupyter magics which are pre-existing). plan.md contains required content (v6, hierarchical, 0.8551, Track 2). No em dashes, no outdated references. Review fixes applied: literature tables aligned with canonical values across all 3 files, architecture diagram corrected (128+96=224)."
+  }
+}
