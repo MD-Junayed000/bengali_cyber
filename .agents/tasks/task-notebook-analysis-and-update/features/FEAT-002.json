@@ -2,7 +2,7 @@
   "id": "FEAT-002",
   "type": "docs",
   "description": "Update bengali-cyberbullying-transformer.ipynb (Track 2): enhance markdown cells, add literature comparison with v6 results showing parameter efficiency, add meaningful visualizations (currently has minimal viz - only training curves), and update documentation to clearly position this as the secondary track.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Read the full transformer notebook structure from bengali-cyberbullying-transformer.ipynb",
     "Update Cell 0 (title markdown): Rewrite to position as Track 2. Add comparison summary showing that while this model (110M params) achieves F1=0.8428, the lightweight hierarchical v6 (3.3M params) achieves F1=0.8551. Explain the trade-off: transformer has better ROC-AUC (0.9617 vs 0.9526) but worse F1 due to threshold sensitivity, and is 33x larger.",
@@ -26,5 +26,5 @@
     "python3 -c \"import json, ast; nb=json.load(open('bengali-cyberbullying-transformer.ipynb')); [ast.parse(''.join(c['source'])) for c in nb['cells'] if c['cell_type']=='code']; print('All cells parse OK')\""
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "Notebook updated from 15 to 21 cells. Added: (1) rewritten title/intro markdown with v6 vs transformer comparison table, (2) expanded Section 4 markdown with data characteristics analysis, (3) EDA visualization cell showing class distribution across splits, (4) per-class precision/recall/F1 bar chart, (5) confusion matrices for all 4 classes, (6) ROC and PR curves, (7) side-by-side v6 vs transformer comparison chart, (8) literature comparison table with 7 published works + 2 internal models, (9) significantly expanded Section 14 with detailed analysis of why transformer underperforms v6. Pre-existing issue: Cell 1 !pip magic fails ast.parse (same as v6 notebook, documented in FEAT-001). All other code cells parse correctly. Original outputs preserved in all cells."
 }
