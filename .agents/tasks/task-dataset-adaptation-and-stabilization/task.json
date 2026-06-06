@@ -1,0 +1,7 @@
+{
+  "task_id": "task-dataset-adaptation-and-stabilization",
+  "task_description": "Adapt both Bengali cyberbullying notebooks to the new dataset (final_bengali_comments_vulgar_threat_insult_neutral.csv) which removes the 'troll' column entirely, and fix the training instability/under-fitting caused by over-regularization. The new dataset has 12,703 rows with columns: text, vulgar, threat, insult, neutral. The key changes are: (1) remove all MERGE_TROLL_INSULT / flaming logic, (2) update to 3 toxic classes (vulgar, threat, insult), (3) handle BOM in CSV, (4) significantly reduce regularization in Track 1 (remove R-Drop, remove Mixup, increase LR, reduce dropout/weight decay/label smoothing, use simple cosine schedule), (5) moderately reduce regularization in Track 2.",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001"],
+  "blocked_reason": null
+}
