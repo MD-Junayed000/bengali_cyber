@@ -250,34 +250,7 @@ The CharCNN captures Bengali morphological cues (abusive suffixes, character pat
 
 ---
 
-## 9. Running Instructions (Kaggle T4 x2)
 
-### Prerequisites
-- Kaggle notebook with **GPU T4 x2** accelerator
-- **Internet ON** (required for FastText download in v6, BanglaBERT weights in Track 2)
-- Dataset: Upload `final_bengali_comments_vulgar_threat_insult_neutral.csv` as a Kaggle dataset
-
-### Running v6 Hierarchical (Primary)
-```
-1. Create new Kaggle notebook
-2. Set accelerator: GPU T4 x2
-3. Enable internet access
-4. Upload bengali-cyberbullying-v6-hierarchical.ipynb
-5. Attach dataset (or update DATA_PATH in Section 2)
-6. Run All (~15-20 minutes total)
-7. Outputs: model checkpoint, classification report, visualizations
-```
-
-### Running Track 2 Transformer (Secondary)
-```
-1. Create new Kaggle notebook
-2. Set accelerator: GPU T4 x2
-3. Enable internet access
-4. Upload bengali-cyberbullying-transformer.ipynb
-5. Attach dataset (or update DATA_PATH in config)
-6. Run All (~30-40 minutes total, ~81s/epoch x 12 epochs)
-7. Outputs: model checkpoint, classification report, visualizations
-```
 
 ### Notes
 - Both notebooks derive `neutral = NOT(vulgar OR threat OR insult)` automatically
