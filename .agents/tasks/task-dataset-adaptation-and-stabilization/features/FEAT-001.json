@@ -2,7 +2,7 @@
   "id": "FEAT-001",
   "type": "fix",
   "description": "Adapt both notebooks to the new dataset (final_bengali_comments_vulgar_threat_insult_neutral.csv) and fix hyperparameters to resolve training instability and under-fitting in Track 1, and reduce over-regularization in Track 2.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "TRACK 1 (bengali-cyberbullying-lightweight-v4.ipynb) - DATASET ADAPTATION:",
     "1. Cell 0 (markdown): Rewrite the intro. Remove all mentions of troll+insult merge / flaming. Update to describe 3 toxic labels (vulgar, threat, insult) with neutral derived. Remove the MERGE_TROLL_INSULT references. Update the honest ceiling estimate. Mention the new dataset (12.7k rows, 4 classes).",
@@ -75,5 +75,5 @@
     "python3 -c \"import json; nb = json.load(open('bengali-cyberbullying-transformer.ipynb')); src = ''.join(nb['cells'][2]['source']); assert 'MERGE_TROLL_INSULT' not in src, 'MERGE_TROLL_INSULT still in Track 2'; print('Track 2 config checks pass')\""
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "Cell 1 in both notebooks contains !pip install (Jupyter magic) which fails ast.parse - this is pre-existing and expected. All other code cells pass ast.parse. The indent=1 JSON format makes the notebooks larger but ensures they remain human-readable and valid. DROPOUT_EMB reduced to 0.35 (from 0.45) as allowed by step 22."
 }
