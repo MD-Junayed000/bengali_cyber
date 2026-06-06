@@ -186,15 +186,15 @@ The CharCNN captures Bengali morphological cues (abusive suffixes, character pat
 
 ## 6. Literature Comparison
 
-| Work | Year | Model | Params | Dataset | F1 | Notes |
+| Work | Year | Model | Params | Dataset | F1 | Venue |
 |------|------|-------|--------|---------|----|----|
-| Emon et al. | 2019 | SVM + TF-IDF | <1M | 5.1k Bengali | 0.72 | ML baselines |
-| Ishmam & Sharmin | 2019 | BiLSTM + Attention | ~2M | 5.1k Bengali | 0.78 | First DL approach |
-| Karim et al. | 2020 | mBERT (DeepCyber) | ~110M | 44k Bengali | 0.87 | Larger dataset, binary |
-| Ahmed et al. | 2021 | Ensemble (CNN+BiLSTM+BERT) | ~120M | 10k Bengali | 0.82 | Multi-model voting |
-| Romim et al. | 2022 | BanglaBERT | ~110M | 30k Bengali | 0.84 | Hate speech detection |
-| Belal et al. | 2023 | CNN-BiLSTM + BanglaBERT | ~115M | 15k Bengali | 0.83 | Hybrid approach |
-| Saha et al. | 2024 | ToxiFusion (multimodal) | ~150M | 8k Bengali | 0.85 | Text + image |
+| Emon et al. | 2019 | SVM + TF-IDF | <1M | 5.1k Bengali | 0.52 | ICCIT 2019 |
+| Ishmam & Sharmin | 2019 | BiLSTM + Attention | ~3M | 5.1k Bengali | 0.71 | ICCIT 2019 |
+| Karim et al. | 2020 | mBERT (DeepHateExplainer) | ~110M | 44k Bengali | 0.87 | IEEE TCSS |
+| Ahmed et al. | 2021 | Ensemble CNN+BiLSTM | ~5M | 10k Bengali | 0.78 | ICCIT 2021 |
+| Romim et al. | 2022 | BanglaBERT fine-tuned | ~110M | 30k Bengali | 0.84 | LREC 2022 |
+| Belal et al. | 2023 | CNN-BiLSTM + BanglaBERT | ~115M | 15k Bengali | 0.86 | IEEE Access |
+| Saha et al. | 2024 | ToxiFusion (multimodal) | ~150M | 8k Bengali | 0.85 | Expert Sys. App. |
 | **Ours (v6)** | **2025** | **Hierarchical CharCNN+BiGRU** | **3.30M** | **12.7k** | **0.8551** | **33x smaller, CPU-ready** |
 | Ours (Track 2) | 2025 | BanglaBERT fine-tuned | ~110M | 12.7k | 0.8428 | Secondary validation |
 
