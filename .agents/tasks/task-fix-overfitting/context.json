@@ -1,0 +1,19 @@
+{
+  "project_type": "Jupyter Notebook ML project - Bengali multi-label cyberbullying classification",
+  "language": "Python (Jupyter notebooks)",
+  "build_system": "Jupyter notebooks run on Kaggle T4 x2 GPUs. No local build system.",
+  "test_framework": "No unit tests - validation is done via training loop metrics (Val Macro-F1, loss curves). Verification is structural (notebook parses as valid JSON, code cells are syntactically valid Python).",
+  "build_command": "python3 -c \"import json; json.load(open('bengali-cyberbullying-lightweight-v4.ipynb')); print('Track 1 OK')\" && python3 -c \"import json; json.load(open('bengali-cyberbullying-transformer.ipynb')); print('Track 2 OK')\"",
+  "test_command": "python3 -c \"import json, ast; nb=json.load(open('bengali-cyberbullying-lightweight-v4.ipynb')); [ast.parse(''.join(c['source'])) for c in nb['cells'] if c['cell_type']=='code']; print('Track 1 syntax OK')\" && python3 -c \"import json, ast; nb=json.load(open('bengali-cyberbullying-transformer.ipynb')); [ast.parse(''.join(c['source'])) for c in nb['cells'] if c['cell_type']=='code']; print('Track 2 syntax OK')\"",
+  "verification_instructions": "1. Verify notebooks are valid JSON. 2. Verify all code cells parse as valid Python (ast.parse). 3. Review hyperparameter changes match the anti-overfitting strategy.",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "No setup needed - editing .ipynb files directly as JSON.",
+  "environment_constraints": "Cannot run the notebooks (need Kaggle T4 x2 GPUs, FastText embeddings, transformers library). Validation is structural only. The notebooks will be run on Kaggle after changes.",
+  "contribution_requirements": "Changes should be targeted at reducing overfitting while maintaining or improving validation F1. Keep the same overall architecture and pipeline structure.",
+  "key_patterns": "Both notebooks use a Config class in cell 2 for all hyperparameters. Training loops are in cell 14 (Track 1) and cell 9 (Track 2). Models are defined in cell 12 (Track 1) and cell 7 (Track 2). Optimizer/scheduler in cell 13 (Track 1) and cell 8 (Track 2).",
+  "relevant_files": [
+    "bengali-cyberbullying-lightweight-v4.ipynb",
+    "bengali-cyberbullying-transformer.ipynb"
+  ],
+  "directory_structure": "Flat repository with 2 notebooks, 1 CSV dataset, and 1 plan.md file."
+}

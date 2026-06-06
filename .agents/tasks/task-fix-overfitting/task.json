@@ -1,0 +1,7 @@
+{
+  "task_id": "task-fix-overfitting",
+  "task_description": "Fix overfitting in both Track 1 (lightweight CharCNN+BiGRU) and Track 2 (transformer BanglaBERT) Bengali cyberbullying classification notebooks. Track 1 shows train F1 rising to 0.87 while val F1 plateaus at 0.78. Track 2 shows train loss dropping to 0.011 while val loss rises to 0.148. Apply comprehensive anti-overfitting techniques: stronger regularization, R-Drop, mixup (Track 1), LLRD and layer freezing (Track 2), adjusted LR/schedules, and tighter early stopping.",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001", "FEAT-002"],
+  "blocked_reason": null
+}
