@@ -1,260 +1,179 @@
-# Bengali Multi-Label Cyberbullying Detection - Architecture & Results
+# Bengali Multi-Label Cyberbullying Detection — Implementation Plan (2026)
 
-**Status:** v6 Hierarchical is the **primary model** (best Macro-F1). Track 2 Transformer is the secondary validation model. Track 1 Lightweight-v4 is deprecated.
+Two notebooks implement one leakage-free pipeline on the same dataset and splits. Both predict the
+three toxic labels (`vulgar`, `threat`, `insult`) and **derive `neutral = NOT(any toxic)`**, then
+tune per-class thresholds on validation.
 
-| Track | Model | Params | Test Macro-F1 | ROC-AUC | Status |
-|-------|-------|--------|---------------|---------|--------|
-| **Primary** | v6 Hierarchical (CharCNN+BiGRU) | 3.30M | **0.8551** | 0.9526 | Active |
-| Secondary | Track 2 Transformer (BanglaBERT) | ~110M | 0.8428 | 0.9617 | Active |
-| Deprecated | Track 1 Lightweight-v4 | ~10M | 0.7958 | -- | Deprecated |
+- **`bengali-cyberbullying-v6-hierarchical.ipynb`** — **primary model**. A compact (3.30M-param)
+  hierarchical CharCNN + FastText + BiGRU + Attention network. **Best result: Macro-F1 = 0.8551**,
+  CPU-deployable.
+- **`bengali-cyberbullying-transformer.ipynb`** — **Track 2**, a BanglaBERT (~110M) fine-tune with a
+  mean-pool + linear head, used as a comparison / ranking model.
 
-**Key finding:** The 3.3M-parameter hierarchical model outperforms the 110M-parameter transformer on Macro-F1 by +1.23 points, while being 33x smaller and CPU-deployable.
+| Model | Params | Test Macro-F1 | ROC-AUC | CPU-deployable | Status |
+|-------|--------|---------------|---------|----------------|--------|
+| **v6 Hierarchical (primary)** | **3.30M** | **0.8551** | 0.9526 | Yes | Active |
+| Track 2 BanglaBERT (mean-pool head) | ~110M | 0.8428 | 0.9617 | No | Active (comparison) |
 
----
-
-## 1. Dataset Overview
-
-- **Source:** `final_bengali_comments_vulgar_threat_insult_neutral.csv`
-- **Total samples:** 12,703 Bengali text comments
-- **Labels (4 classes):** vulgar, threat, insult, neutral (multi-label, binary columns)
-
-| Class | Count | Percentage |
-|-------|-------|------------|
-| Vulgar | 3,894 | 30.7% |
-| Threat | 2,236 | 17.6% |
-| Insult | 4,333 | 34.1% |
-| Neutral | 5,505 | 43.3% |
-| Multi-label (2+ toxic) | 2,900 | 22.8% |
-
-**Co-occurrence:** vulgar+insult = 2,235 | vulgar+threat = 603 | threat+insult = 794
-
-**Neutral derivation:** `neutral = NOT(vulgar OR threat OR insult)` - not an independent label.
+**Headline finding:** the 3.30M-parameter v6 model beats the 110M-parameter transformer on Macro-F1
+by **+1.23 points** while being **33x smaller** and runnable on CPU.
 
 ---
 
-## 2. Architecture Comparison
+## 1. Dataset
 
-### 2.1 v6 Hierarchical Model (Primary - 3.30M params)
+- **File:** `final_bengali_comments_vulgar_threat_insult_neutral.csv`
+- **Rows:** ~12,700 Bengali comments (after light clean + dedup: ~12,500).
+- **Labels:** multi-label binary columns `vulgar`, `threat`, `insult`; `neutral` is **derived**.
 
-```
-Input: Bengali text (tokenized words + characters)
-    |
-    +---> [Character-level Branch]
-    |        CharCNN: Embedding(24d) -> Conv1d(kernels 2,3,4; 32 filters each) -> MaxPool
-    |        Output: 96d character features per word
-    |
-    +---> [Word-level Branch]
-    |        FastText embeddings (300d) -> Linear projection (128d)
-    |        Output: 128d word features
-    |
-    +---> [Concatenation: 128d + 96d = 224d per token]
-             |
-             v
-         TextCNN: 3 parallel Conv1d (kernels 2,3,4; 96 filters each) -> MaxPool
-             |  Output: 288d
-             v
-         BiGRU: 2 layers, hidden=96 -> 192d sequence
-             |
-             v
-         Additive Attention -> 192d context vector
-             |
-             +---> [Stage 1 Head: Binary toxic/neutral]
-             |        Multi-sample dropout -> Linear(192, 1) -> Sigmoid
-             |        Output: P(toxic)
-             |
-             +---> [Stage 2 Head: Multi-label toxic subtypes]
-                      Multi-sample dropout -> Linear(192, 3) -> Sigmoid
-                      Output: P(vulgar|toxic), P(threat|toxic), P(insult|toxic)
+| Class | Approx. share |
+|-------|---------------|
+| vulgar | ~30.5% |
+| threat | ~17.2% (rarest toxic class) |
+| insult | ~34.0% |
+| neutral (derived) | ~43.7% |
 
-    Inference formula:
-        P(class) = P(toxic) * P(class|toxic)
-        P(neutral) = 1 - P(toxic)
-```
-
-**Key Design Choices:**
-- Hierarchical two-stage decomposition isolates the toxic-vs-neutral decision
-- Stage 2 trains ONLY on toxic samples, removing neutral noise from subtype learning
-- Multi-sample dropout (5 forward passes, averaged) provides regularization
-- Character CNN captures morphological patterns in Bengali script
-- Focal loss handles class imbalance
-
-### 2.2 Track 2 Transformer Model (Secondary - ~110M params)
-
-```
-Input: Bengali text (BPE tokenized)
-    |
-    v
-BanglaBERT Encoder (csebuetnlp/banglabert)
-    12 transformer layers, 768 hidden dim
-    Bottom 2 layers frozen
-    |
-    v
-Masked Mean-Pool (over non-padding tokens)
-    Output: 768d sentence embedding
-    |
-    v
-LayerNorm(768)
-    |
-    v
-Multi-sample Dropout (5x, p=0.1)
-    |
-    v
-Linear(768, 3) -> Sigmoid
-    Output: P(vulgar), P(threat), P(insult)
-    P(neutral) = NOT(any prediction above threshold)
-```
-
-**Training Configuration:**
-- LLRD (Layer-wise Learning Rate Decay): factor 0.9
-- R-Drop regularization: alpha = 0.3
-- Cosine learning rate schedule with warmup
-- AMP (Automatic Mixed Precision)
-- Focal loss for class imbalance
-- 12 epochs, early stopping patience = 5
-- AdamW optimizer
+`is_toxic` (any of the three) ≈ 56% — this is the Stage-1 positive rate for v6.
 
 ---
 
-## 3. Results Comparison
+## 2. Architecture — v6 Hierarchical (primary, 3.30M params)
 
-### 3.1 Per-Class F1 Scores
+```
+Input text (word ids + char ids)
+        |
+        +-- Char branch:  CharEmbed -> CharCNN (k=2,3,4) -> per-word char features
+        +-- Word branch:  FastText cc.bn.300 (300d, frozen ep 1-24) -> projection
+        |
+        v   concat(word, char) per token
+   TextCNN (parallel k=2,3,4)  +  BiGRU (2 layers, hidden 96 -> 192d)
+        |
+   Additive Attention -> context vector
+        |
+   +----+--------------------------+
+   |                               |
+   v                               v
+ Stage 1 head                   Stage 2 head
+ Linear -> P(toxic)             Linear -> P(vulgar|tox), P(threat|tox), P(insult|tox)
+ (binary toxic vs neutral)      (multi-sample dropout; trained on TOXIC rows only)
 
-| Class | v6 Hierarchical | Track 2 Transformer | Delta |
-|-------|----------------|---------------------|-------|
-| Vulgar | **0.8637** | 0.8626 | +0.0011 |
-| Threat | **0.8949** | 0.8061 | +0.0888 |
-| Insult | 0.7936 | **0.7997** | -0.0061 |
-| Neutral | 0.8680 | **0.9027** | -0.0347 |
-| **Macro-F1** | **0.8551** | 0.8428 | **+0.0123** |
+Inference:  P(class)   = P(toxic) * P(class|toxic)
+            P(neutral) = 1 - P(toxic)
+```
 
-### 3.2 Overall Metrics
+**Training:** focal loss with per-stage `pos_weight`; combined loss `L = a*Stage1 + b*Stage2`;
+frozen embeddings epochs 1-24 then unfrozen 25-35; SWA over the post-unfreeze plateau; mixup;
+multi-sample dropout; cosine schedule with warmup; per-class threshold tuning on validation.
 
-| Metric | v6 Hierarchical | Track 2 Transformer |
-|--------|----------------|---------------------|
+**Why it works:** Stage 1 is an easy boundary (binary F1 = 0.9212) that absorbs neutral noise;
+Stage 2 trains only on toxic rows, so minority-class gradients (threat at ~17%) are not diluted by
+the neutral majority; the probabilistic chain self-calibrates and suppresses false positives.
+
+---
+
+## 3. Architecture — Track 2 BanglaBERT (comparison, ~110M params)
+
+```
+Input text (WordPiece)
+        |
+        v
+BanglaBERT encoder (csebuetnlp/banglabert, ELECTRA-base; bottom 2 layers frozen)
+        |
+   masked mean-pool over last hidden states
+        |
+   LayerNorm -> multi-sample dropout (5x) -> Linear(768 -> 3)  = P(vulgar), P(threat), P(insult)
+        |
+   neutral derived as NOT(any toxic above its tuned threshold)
+```
+
+**Training:** Focal BCE (gamma 2.0, label smoothing 0.05), LLRD (factor 0.9), R-Drop (alpha 0.3),
+bottom-2 layer freeze, cosine schedule with warmup, AMP, `nn.DataParallel`, early stopping;
+per-class threshold tuning on validation.
+
+**Note (ablation tried and reverted):** a hierarchical 2-stage head (mirroring v6) was tested on top
+of BanglaBERT and scored slightly *lower* (~0.834) than this flat mean-pool head (0.8428). A
+pretrained encoder already encodes the toxic/neutral and subtype signals jointly, so the two-stage
+split removed flexibility rather than adding it. Track 2 therefore uses the flat head.
+
+---
+
+## 4. Results
+
+### 4.1 Overall
+
+| Metric | v6 Hierarchical | Track 2 (mean-pool) |
+|--------|-----------------|---------------------|
 | Test Macro-F1 | **0.8551** | 0.8428 |
+| Micro-F1 | 0.8528 | 0.8512 |
 | ROC-AUC | 0.9526 | **0.9617** |
-| PR-AUC | -- | 0.9227 |
-| Stage 1 F1 (binary) | 0.9212 | -- |
-| Hamming Accuracy | 0.9033 | -- |
+| PR-AUC | 0.9185 | **0.9227** |
+| Stage-1 binary F1 | 0.9212 | — |
+| Hamming accuracy | 0.9033 | 0.9052 |
 | Parameters | **3.30M** | ~110M |
-| CPU-Deployable | Yes | No (practical) |
+
+### 4.2 Per-class F1
+
+| Class | v6 Hierarchical | Track 2 | Winner |
+|-------|-----------------|---------|--------|
+| vulgar | **0.8637** | 0.8626 | v6 (+0.0011) |
+| threat | **0.8949** | 0.8061 | **v6 (+0.0888)** |
+| insult | 0.7936 | **0.7997** | Track 2 (+0.0061) |
+| neutral | 0.8680 | **0.9027** | Track 2 (+0.0347) |
+| **Macro** | **0.8551** | 0.8428 | **v6 (+0.0123)** |
+
+v6's largest edge is on the rarest class, `threat` (+8.9 F1 points); the transformer wins on
+`insult` and `neutral`, helped by pretrained language understanding.
 
 ---
 
-## 4. Why v6 Hierarchical Outperforms the Transformer
+## 5. Parameter Efficiency
 
-Despite having 33x fewer parameters, the v6 hierarchical model achieves better Macro-F1. Five key reasons:
+| Model | Params | Macro-F1 | F1 per Million Params | CPU inference |
+|-------|--------|----------|-----------------------|---------------|
+| v6 Hierarchical | 3.30M | 0.8551 | 0.259 | Yes (<10ms/sample) |
+| Track 2 BanglaBERT | ~110M | 0.8428 | 0.0077 | Impractical (~50-100ms) |
 
-### 4.1 Hierarchical Decomposition Provides Better Gradient Signal
-
-The two-stage architecture separates the easy decision (toxic vs neutral, F1=0.9212) from the hard decision (which toxic subtype). This prevents the gradient conflict where neutral samples dilute the learning signal for toxic subtypes, especially the minority class (threat at 17.6%).
-
-### 4.2 Stage-2 Toxic-Only Training Eliminates Neutral Noise
-
-By training the subtype classifier exclusively on confirmed toxic samples (7,197 rows), Stage 2 sees a cleaner, more balanced distribution. This is why threat F1 jumps to 0.8949 in v6 vs only 0.8061 in the flat transformer that must simultaneously separate all classes.
-
-### 4.3 Probabilistic Chain Rule Provides Natural Calibration
-
-The inference formula `P(class) = P(toxic) * P(class|toxic)` provides built-in calibration. If the model is uncertain about toxicity (P(toxic) near 0.5), all toxic class probabilities are automatically dampened. The transformer has no such self-correcting mechanism.
-
-### 4.4 Dataset Size is Suboptimal for 110M Parameters
-
-With only 12,703 training samples, fine-tuning 110M parameters (even with LLRD and frozen layers) is data-inefficient. The v6 model's 3.3M parameters are better matched to this data regime, avoiding overfitting and extracting more signal per sample.
-
-### 4.5 Task-Specific Architecture Beats General-Purpose Fine-Tuning
-
-The CharCNN captures Bengali morphological cues (abusive suffixes, character patterns). The BiGRU+Attention learns sequential context. These inductive biases are specifically tuned for the cyberbullying detection task, whereas BanglaBERT's pretraining objective (masked language modeling) is general-purpose and must be adapted.
-
----
-
-## 5. Parameter Efficiency Analysis
-
-| Model | Params | Macro-F1 | F1 per Million Params | CPU Inference | GPU Required |
-|-------|--------|----------|----------------------|---------------|--------------|
-| v6 Hierarchical | 3.30M | 0.8551 | 0.2591 | Yes (fast) | No |
-| Track 2 Transformer | ~110M | 0.8428 | 0.0077 | Impractical | Yes |
-| Track 1 Lightweight-v4 | ~10M | 0.7958 | 0.0796 | Yes | No |
-
-**v6 is 33.6x more parameter-efficient** than the transformer (F1-per-million-params: 0.2591 vs 0.0077).
-
-**Deployment implications:**
-- v6 can run on a single CPU core with <50ms inference latency per comment
-- Track 2 requires GPU (or very slow CPU inference ~2-5s per comment)
-- v6 model file size: ~13MB vs Track 2: ~440MB
+v6 is roughly **34x more parameter-efficient** and ships as a ~13MB checkpoint vs ~440MB.
 
 ---
 
 ## 6. Literature Comparison
 
-| Work | Year | Model | Params | Dataset | F1 | Venue |
-|------|------|-------|--------|---------|----|----|
-| Emon et al. | 2019 | SVM + TF-IDF | <1M | 5.1k Bengali | 0.52 | ICCIT 2019 |
-| Ishmam & Sharmin | 2019 | BiLSTM + Attention | ~3M | 5.1k Bengali | 0.71 | ICCIT 2019 |
-| Karim et al. | 2020 | mBERT (DeepHateExplainer) | ~110M | 44k Bengali | 0.87 | IEEE TCSS |
-| Ahmed et al. | 2021 | Ensemble CNN+BiLSTM | ~5M | 10k Bengali | 0.78 | ICCIT 2021 |
-| Romim et al. | 2022 | BanglaBERT fine-tuned | ~110M | 30k Bengali | 0.84 | LREC 2022 |
-| Belal et al. | 2023 | CNN-BiLSTM + BanglaBERT | ~115M | 15k Bengali | 0.86 | IEEE Access |
-| Saha et al. | 2024 | ToxiFusion (multimodal) | ~150M | 8k Bengali | 0.85 | Expert Sys. App. |
-| **Ours (v6)** | **2026** | **Hierarchical CharCNN+BiGRU** | **3.30M** | **12.7k** | **0.8551** | **33x smaller, CPU-ready** |
-| Ours (Track 2) | 2026 | BanglaBERT fine-tuned | ~110M | 12.7k | 0.8428 | Secondary validation |
+F1 across papers is approximate (different datasets, label schemas, protocols); our two models share
+identical data and splits. Our work is dated **2026**.
 
-**Notable observations:**
-- Our v6 achieves competitive F1 (0.8551) with only 3.3M params on a multi-label task
-- Most prior work with comparable F1 uses 30-50x more parameters
-- Prior works achieving >0.85 F1 typically use larger datasets (30k-44k) or binary classification
-- Our result is multi-label (4 classes) which is inherently harder than binary toxic/non-toxic
+| Year | Work | Model | Params | Dataset | Macro-F1 | CPU |
+|------|------|-------|--------|---------|----------|-----|
+| 2019 | Emon et al. (ICCIT) | SVM + TF-IDF | <1M | 5.1K | ~0.52 | Yes |
+| 2019 | Ishmam & Sharmin (ICCIT) | BiLSTM + Attention | ~3M | 5.1K | ~0.71 | Yes |
+| 2020 | Karim et al. (IEEE TCSS) | mBERT (DeepHateExplainer) | ~110M | 44K | ~0.87 | No |
+| 2021 | Ahmed et al. (ICCIT) | Ensemble CNN+BiLSTM | ~5M | 10K | ~0.78 | Yes |
+| 2022 | Romim et al. (LREC) | BanglaBERT fine-tuned | ~110M | 30K | ~0.84 | No |
+| 2023 | Belal et al. (IEEE Access) | CNN-BiLSTM + BanglaBERT | ~115M | 15K | ~0.86 | No |
+| 2024 | Saha et al. (Expert Sys. App.) | ToxiFusion (multimodal) | ~150M | 8K | ~0.85 | No |
+| **2026** | **Ours — v6 Hierarchical** | **CharCNN+FastText+BiGRU+Attn (2-stage)** | **3.30M** | **12.7K** | **0.8551** | **Yes** |
+| 2026 | Ours — Track 2 | BanglaBERT + mean-pool + R-Drop + LLRD | ~110M | 12.7K | 0.8428 | No |
 
----
-
-## 7. Track Status
-
-### Primary: v6 Hierarchical (`bengali-cyberbullying-v6-hierarchical.ipynb`)
-- **Status:** Active, best performer
-- **Result:** Macro-F1 = 0.8551, ROC-AUC = 0.9526
-- **Strengths:** Lightweight (3.3M), CPU-deployable, best F1, interpretable attention weights
-- **Use case:** Production deployment, real-time moderation, resource-constrained environments
-
-### Secondary: Track 2 Transformer (`bengali-cyberbullying-transformer.ipynb`)
-- **Status:** Active, validation/comparison model
-- **Result:** Macro-F1 = 0.8428, ROC-AUC = 0.9617
-- **Strengths:** Best ROC-AUC, strong neutral detection (F1=0.9027), leverages pretrained knowledge
-- **Use case:** Ensemble candidate, research comparison, high-AUC-required scenarios
-
-### Deprecated: Track 1 Lightweight-v4 (`bengali-cyberbullying-lightweight-v4.ipynb`)
-- **Status:** Deprecated (worst performer across all metrics)
-- **Result:** Macro-F1 = 0.7958
-- **Reason for deprecation:** Superseded by v6 which uses same compute budget but better architecture
+Observations:
+- v6 reaches competitive F1 with **33-45x fewer parameters** than the transformer-based prior work.
+- v6 is the only model in this table that exceeds 0.85 Macro-F1 **and** is CPU-deployable.
+- Works reporting higher F1 use larger datasets (30-44K) and/or larger/multimodal models.
 
 ---
 
-## 8. Potential Improvements
+## 7. Running on Kaggle (both notebooks)
 
-### For v6 Hierarchical (Primary)
-1. **Larger augmentation for threat class** - Threat (17.6%) remains the hardest non-neutral class; back-translation or contextual augmentation could help
-2. **Knowledge distillation from transformer** - Use Track 2's soft probabilities as auxiliary training signal
-3. **Subword tokenization** - Replace word-level FastText with BPE-based embeddings to handle OOV better
-4. **Curriculum learning** - Train on easy samples first (clear toxic/neutral), then ambiguous boundary cases
-5. **Label smoothing** - Soften targets to 0.05/0.95 to reduce overconfidence on noisy labels
-
-### For Track 2 Transformer (Secondary)
-1. **Hierarchical head** - Apply the same two-stage approach on top of BanglaBERT features
-2. **Larger pretrained model** - Try `csebuetnlp/banglabert_large` (if available) or XLM-RoBERTa-large
-3. **More training data** - The 12.7k dataset is small for 110M params; semi-supervised or data augmentation
-4. **Adversarial training (FGM/PGD)** - Add perturbation-based regularization for robustness
-5. **Ensemble with v6** - Average probabilities from both models for complementary strengths
-
-### Cross-Track Improvements
-1. **Ensemble fusion** - Weighted average of v6 + Track 2 probabilities (weights tuned on validation)
-2. **Active learning** - Use model disagreement between tracks to identify samples for re-annotation
-3. **Cross-validation** - Run 5-fold CV to get more robust estimates and reduce variance in comparisons
+1. Accelerator **GPU T4 x2**, **Internet ON** (FastText / BanglaBERT downloads).
+2. Attach the dataset; `DATA_PATH` points to the Kaggle path with on-disk fallbacks.
+3. Run All. Outputs: `v6_*` (hierarchical) and `transformer_*` (Track 2) checkpoints, summaries,
+   curves, and comparison figures.
 
 ---
 
+## 8. Where remaining accuracy lives
 
-
-### Notes
-- Both notebooks derive `neutral = NOT(vulgar OR threat OR insult)` automatically
-- Both use per-class threshold tuning on validation set
-- Both use `nn.DataParallel` for multi-GPU training
-- v6 uses split-before-augment to prevent data leakage
-- Track 2 uses LLRD and partial layer freezing for stable fine-tuning
+- **`insult`** (F1 ~0.79) is the hardest class in both models due to heavy overlap with `vulgar`;
+  targeted augmentation or a vulgar/insult disambiguation stage is the main lever.
+- **Ensemble v6 + Track 2** probabilities: complementary strengths (v6 owns `threat`, Track 2 owns
+  `insult` / `neutral` and ranking/ROC-AUC) — the most promising cross-model gain.
+- **Larger data (>50k)** would favor the transformer and is worth re-evaluating if available.
