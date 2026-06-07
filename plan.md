@@ -195,8 +195,8 @@ The CharCNN captures Bengali morphological cues (abusive suffixes, character pat
 | Romim et al. | 2022 | BanglaBERT fine-tuned | ~110M | 30k Bengali | 0.84 | LREC 2022 |
 | Belal et al. | 2023 | CNN-BiLSTM + BanglaBERT | ~115M | 15k Bengali | 0.86 | IEEE Access |
 | Saha et al. | 2024 | ToxiFusion (multimodal) | ~150M | 8k Bengali | 0.85 | Expert Sys. App. |
-| **Ours (v6)** | **2025** | **Hierarchical CharCNN+BiGRU** | **3.30M** | **12.7k** | **0.8551** | **33x smaller, CPU-ready** |
-| Ours (Track 2) | 2025 | BanglaBERT fine-tuned | ~110M | 12.7k | 0.8428 | Secondary validation |
+| **Ours (v6)** | **2026** | **Hierarchical CharCNN+BiGRU** | **3.30M** | **12.7k** | **0.8551** | **33x smaller, CPU-ready** |
+| Ours (Track 2) | 2026 | BanglaBERT fine-tuned | ~110M | 12.7k | 0.8428 | Secondary validation |
 
 **Notable observations:**
 - Our v6 achieves competitive F1 (0.8551) with only 3.3M params on a multi-label task
